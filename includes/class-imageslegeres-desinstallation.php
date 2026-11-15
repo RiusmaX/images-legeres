@@ -23,6 +23,7 @@ class ImagesLegeres_Desinstallation {
 		ImagesLegeres_Reglages::OPTION,
 		'images_legeres_version',
 		ImagesLegeres_Activation::OPTION_AUTRE_EDITEUR,
+		ImagesLegeres_Lot::OPTION_ETAT,
 	);
 
 	/**
@@ -34,6 +35,7 @@ class ImagesLegeres_Desinstallation {
 			self::restaurer_fichier( $ligne );
 		}
 
+		ImagesLegeres_Lot::annuler_planifications();
 		self::supprimer_dossier_images_legeres();
 		self::desinstaller();
 	}
@@ -46,6 +48,7 @@ class ImagesLegeres_Desinstallation {
 		global $wpdb;
 
 		ImagesLegeres_Table::supprimer();
+		ImagesLegeres_File::supprimer();
 
 		foreach ( self::OPTIONS as $option ) {
 			delete_option( $option );

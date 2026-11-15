@@ -82,6 +82,10 @@ class ImagesLegeres_Cli {
 			$orphelins[] = array( 'type' => 'table', 'identifiant' => ImagesLegeres_Table::nom() );
 		}
 
+		if ( ImagesLegeres_File::existe() ) {
+			$orphelins[] = array( 'type' => 'table', 'identifiant' => ImagesLegeres_File::nom() );
+		}
+
 		foreach ( ImagesLegeres_Desinstallation::OPTIONS as $option ) {
 			if ( false !== get_option( $option, false ) ) {
 				$orphelins[] = array( 'type' => 'option', 'identifiant' => $option );
@@ -140,5 +144,57 @@ class ImagesLegeres_Cli {
 		if ( $dry_run ) {
 			WP_CLI::log( 'dry-run : aucune écriture.' );
 		}
+	}
+
+	/**
+	 * Lance le lot : amorce la file (ajoute les pièces jointes images pas encore suivies),
+	 * reprend les lignes bloquées par une coupure, puis traite jusqu'à épuisement de la file
+	 * ou à la limite donnée. Hors serveur web (ADR 0004 §1) : voie du lot initial, lancée à la
+	 * main ou par une tâche planifiée, de nuit.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--limite=<n>]
+	 * : Nombre de pièces jointes au plus à traiter. 0 = jusqu'à vider la file.
+	 * ---
+	 * default: 0
+	 * ---
+	 *
+	 * [--forcer]
+	 * : Ignore la plage horaire et le seuil de charge (usage manuel assumé).
+	 *
+	 * [--format=<format>]
+	 * : table, json ou yaml.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - yaml
+	 * ---
+	 *
+	 * @when after_wp_load
+	 */
+	public function run( $args, $assoc_args ) {
+		$limite = (int) \WP_CLI\Utils\get_flag_value( $assoc_args, 'limite', 0 );
+		$forcer = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'forcer', false );
+
+		$resultat = ImagesLegeres_Lot::executer_cli( $limite, $forcer );
+
+		if ( $resultat['refuse'] ) {
+			WP_CLI::warning( 'file non lancée : ' . $resultat['motif'] . ' (reprends avec --forcer pour ignorer).' );
+		} elseif ( '' !== $resultat['motif'] ) {
+			WP_CLI::log( 'arrêt anticipé : ' . $resultat['motif'] . '.' );
+		}
+
+		$donnees = array(
+			array( 'cle' => 'traites', 'valeur' => (string) $resultat['traites'] ),
+			array( 'cle' => 'fait', 'valeur' => (string) ( $resultat['resume']['fait'] ?? 0 ) ),
+			array( 'cle' => 'ignore', 'valeur' => (string) ( $resultat['resume']['ignore'] ?? 0 ) ),
+			array( 'cle' => 'erreur', 'valeur' => (string) ( $resultat['resume']['erreur'] ?? 0 ) ),
+			array( 'cle' => 'restants', 'valeur' => (string) $resultat['restants'] ),
+		);
+
+		\WP_CLI\Utils\format_items( \WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ), $donnees, array( 'cle', 'valeur' ) );
 	}
 }

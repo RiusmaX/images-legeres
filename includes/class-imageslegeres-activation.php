@@ -15,6 +15,7 @@ class ImagesLegeres_Activation {
 
 	public static function activer() {
 		ImagesLegeres_Table::creer();
+		ImagesLegeres_File::creer();
 		ImagesLegeres_Reglages::initialiser_defauts();
 		update_option( 'images_legeres_version', IMAGES_LEGERES_VERSION );
 
@@ -36,10 +37,14 @@ class ImagesLegeres_Activation {
 	/**
 	 * La réécriture s'arrête, le site revient à ses images d'origine en moins d'une minute :
 	 * rien n'est supprimé sur le disque ni en base, c'est le réglage « réécriture à la sortie »
-	 * qui cesse d'être évalué puisque le plugin n'est plus chargé (ADR 0004 §7).
+	 * qui cesse d'être évalué puisque le plugin n'est plus chargé (ADR 0004 §7). Les actions
+	 * Action Scheduler déjà planifiées sont annulées : une fois le plugin désactivé, sa classe
+	 * de traitement ne se recharge plus, une action orpheline échouerait au prochain passage
+	 * de la file d'Action Scheduler.
 	 */
 	public static function desactiver() {
-		// Rien à nettoyer au niveau « désactiver » : ni table, ni fichier, ni option supprimés.
+		ImagesLegeres_Lot::annuler_planifications();
+		update_option( ImagesLegeres_Lot::OPTION_ETAT, 'arret' );
 	}
 
 	/**

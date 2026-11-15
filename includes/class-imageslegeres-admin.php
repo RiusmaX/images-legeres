@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class ImagesLegeres_Admin {
 
-	const OPTION_LOT_ETAT = 'images_legeres_lot_etat';
+	const OPTION_LOT_ETAT = ImagesLegeres_Lot::OPTION_ETAT;
 	const SLUG            = 'images-legeres';
 
 	public static function enregistrer() {
@@ -37,23 +37,25 @@ class ImagesLegeres_Admin {
 		switch ( $action ) {
 			case 'enregistrer_reglages':
 				check_admin_referer( 'images_legeres_reglages' );
+				$avant    = ImagesLegeres_Reglages::tout();
 				$reglages = self::enregistrer_reglages();
 				ImagesLegeres_Htaccess::appliquer( ! empty( $reglages['mode_htaccess_actif'] ) );
+				ImagesLegeres_Lot::signaler_si_reglages_flux_changes( $avant, $reglages );
 				break;
 
 			case 'lot_lancer':
 				check_admin_referer( 'images_legeres_lot' );
-				update_option( self::OPTION_LOT_ETAT, 'en-cours' );
+				ImagesLegeres_Lot::demarrer();
 				break;
 
 			case 'lot_pause':
 				check_admin_referer( 'images_legeres_lot' );
-				update_option( self::OPTION_LOT_ETAT, 'en-pause' );
+				ImagesLegeres_Lot::mettre_en_pause();
 				break;
 
 			case 'lot_reprendre':
 				check_admin_referer( 'images_legeres_lot' );
-				update_option( self::OPTION_LOT_ETAT, 'en-cours' );
+				ImagesLegeres_Lot::reprendre();
 				break;
 
 			case 'tout_rendre':
@@ -235,6 +237,10 @@ class ImagesLegeres_Admin {
 	private static function rendre_encart_lots( $lot_etat ) {
 		echo '<h2>' . esc_html__( 'Lots', 'images-legeres' ) . '</h2>';
 		printf( '<p>%s <strong>%s</strong></p>', esc_html__( 'État de la file :', 'images-legeres' ), esc_html( $lot_etat ) );
+
+		if ( ! ImagesLegeres_Lot::action_scheduler_disponible() ) {
+			echo '<p class="notice notice-warning" style="padding:8px;">' . esc_html__( 'Action Scheduler est indisponible (ni WooCommerce, ni la bibliothèque autonome) : la file automatique ne peut pas tourner. Utilisez « wp images-legeres run » en ligne de commande.', 'images-legeres' ) . '</p>';
+		}
 
 		echo '<form method="post" style="display:inline-block;margin-right:8px;">';
 		wp_nonce_field( 'images_legeres_lot' );
