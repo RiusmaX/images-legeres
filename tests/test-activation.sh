@@ -2,6 +2,12 @@
 # Test exécuté dans le conteneur `cli` de tests/env/compose.yml :
 #   docker compose -f tests/env/compose.yml run --rm cli bash /var/www/html/wp-content/plugins/images-legeres/tests/test-activation.sh
 #
+# EXIGE UN WORDPRESS JETABLE NEUF (tests/env/up.sh sur des volumes vides) : la suite
+# désinstalle l'extension et vérifie qu'il ne reste aucun orphelin. Ne pas enchaîner les
+# suites sur la même instance. Contrairement aux cinq autres, celle-ci tourne DANS le
+# conteneur `cli` (elle ne touche à aucune image, donc le délégué Imagick manquant ne la
+# gêne pas) : la lancer depuis l'hôte la fait échouer intégralement, faute de `wp`.
+#
 # Vérifie : activation/désactivation sans erreur PHP, table créée puis supprimée au niveau
 # « tout rendre », aucun drop-in posé, `wp images-legeres orphelins` vide après désinstallation,
 # réglage « mode aperçu » actif par défaut et lisible par `status`.
