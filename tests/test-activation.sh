@@ -101,6 +101,50 @@ VUS=${CARRES##*:}
 verifier "harmoniser produit de vrais carrés dans le conteneur cli (obtenu $CARRES)" \
   $([[ "$CARRES" == 1:* && "${VUS:-0}" -ge 1 ]] && echo 0 || echo 1)
 
+echo "--- migration de réglage sans changement de version (I1b, 2026-11-15) ---"
+# Reconstitue l'état exact de la production : une mise à jour déposée par Git, même numéro
+# de version avant et après (0.1.0 → 0.1.0), un seuil de gain hérité à 10 %, et aucun
+# registre de migrations. `verifier_version()` comparait deux chaînes identiques et ne
+# déclenchait rien : le seuil est resté à 10 % et a laissé 87 sous-tailles sans WebP.
+# Pose ET relecture dans le MÊME appel : relire par un second `wp eval` rejouerait
+# `plugins_loaded`, donc les migrations, avant d'avoir rien pu observer.
+ETAT_AVANT=$($WP eval '
+$r = ImagesLegeres_Reglages::tout();
+$r["gain_minimal_pourcent"] = 10;
+unset( $r[ ImagesLegeres_Reglages::CLE_MIGRATIONS ] );
+update_option( ImagesLegeres_Reglages::OPTION, $r );
+// Version enregistrée IDENTIQUE à celle du fichier : rien ne doit dépendre d un écart.
+update_option( "images_legeres_version", IMAGES_LEGERES_VERSION );
+
+$relu = get_option( ImagesLegeres_Reglages::OPTION );
+echo (int) $relu["gain_minimal_pourcent"] . ":" . ( isset( $relu[ ImagesLegeres_Reglages::CLE_MIGRATIONS ] ) ? "registre" : "sans-registre" );' | tr -d '\r')
+
+echo "état avant la requête suivante (attendu 10:sans-registre) : $ETAT_AVANT"
+verifier "seuil hérité à 10 % posé, registre absent" \
+  $([[ "$ETAT_AVANT" == "10:sans-registre" ]] && echo 0 || echo 1)
+
+# Requête suivante : `plugins_loaded` rejoue `ImagesLegeres_Plugin::demarrer()`, donc les
+# migrations. Aucun changement de version entre les deux.
+MIGRATION=$($WP eval '
+$r = get_option( ImagesLegeres_Reglages::OPTION );
+$registre = isset( $r[ ImagesLegeres_Reglages::CLE_MIGRATIONS ] ) ? (array) $r[ ImagesLegeres_Reglages::CLE_MIGRATIONS ] : array();
+echo (int) $r["gain_minimal_pourcent"] . ":"
+  . ( in_array( "gain-minimal-zero-2026-11-15", $registre, true ) ? "inscrite" : "absente" ) . ":"
+  . ( get_option( "images_legeres_version" ) === IMAGES_LEGERES_VERSION ? "version-inchangee" : "version-changee" );' | tr -d '\r')
+echo "après une simple requête (attendu 0:inscrite:version-inchangee) : $MIGRATION"
+verifier "la migration part sans changement de numéro de version" \
+  $([[ "$MIGRATION" == "0:inscrite:version-inchangee" ]] && echo 0 || echo 1)
+
+# Le registre vit DANS l'option de réglages : il doit survivre à un enregistrement des
+# réglages par l'écran d'administration, qui reconstruit le tableau depuis `defauts()`.
+REGISTRE_APRES_SAUVEGARDE=$($WP eval '
+ImagesLegeres_Reglages::enregistrer( ImagesLegeres_Reglages::defauts() );
+$r = get_option( ImagesLegeres_Reglages::OPTION );
+$registre = isset( $r[ ImagesLegeres_Reglages::CLE_MIGRATIONS ] ) ? (array) $r[ ImagesLegeres_Reglages::CLE_MIGRATIONS ] : array();
+echo in_array( "gain-minimal-zero-2026-11-15", $registre, true ) ? "conserve" : "PERDU";' | tr -d '\r')
+verifier "le registre survit à un enregistrement des réglages (obtenu $REGISTRE_APRES_SAUVEGARDE)" \
+  $([[ "$REGISTRE_APRES_SAUVEGARDE" == "conserve" ]] && echo 0 || echo 1)
+
 # L'image de flux, pour que `_images_legeres_flux` soit écrite elle aussi : le contrôle
 # d'après ne vaut que sur les clés réellement posées.
 $WP eval "ImagesLegeres_Flux::generer( $ID_IMAGE );" >/dev/null 2>&1

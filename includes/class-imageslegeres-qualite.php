@@ -96,9 +96,15 @@ class ImagesLegeres_Qualite {
 			}
 		}
 
+		// `Imagick::ALPHACHANNEL_OFF` n'existe qu'avec ImageMagick 7 : l'écrire sans garde
+		// levait une Error fatale sur l'hébergement (ImageMagick 6.9.11) et tuait
+		// `wp images-legeres qualite` sans message (I1b, 2026-11-15). ImagesLegeres_Compat
+		// essaie OFF, puis DEACTIVATE (ImageMagick 6), puis REMOVE, puis aplatit sur blanc.
+		$moyen_alpha = '';
+
 		if ( ! $source->getImageAlphaChannel() && ! $webp->getImageAlphaChannel() ) {
-			$source->setImageAlphaChannel( Imagick::ALPHACHANNEL_OFF );
-			$webp->setImageAlphaChannel( Imagick::ALPHACHANNEL_OFF );
+			$source = ImagesLegeres_Compat::retirer_alpha( $source, $moyen_alpha );
+			$webp   = ImagesLegeres_Compat::retirer_alpha( $webp, $moyen_alpha );
 		}
 
 		$valeur_ssim = null;
@@ -108,8 +114,8 @@ class ImagesLegeres_Qualite {
 
 		if ( self::metrique_imagick_disponible() ) {
 			try {
-				$ssim = $source->compareImages( $webp, Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR );
-				$psnr = $source->compareImages( $webp, Imagick::METRIC_PEAKSIGNALTONOISERATIO );
+				$ssim = $source->compareImages( $webp, ImagesLegeres_Compat::constante( 'METRIC_STRUCTURAL_SIMILARITY_ERROR' ) );
+				$psnr = $source->compareImages( $webp, ImagesLegeres_Compat::constante( 'METRIC_PEAKSIGNALTONOISERATIO' ) );
 
 				// compareImages rend array( image de différence, distorsion ) : la distorsion
 				// est la valeur de la métrique. L'image de différence est jetée (sinon elle
@@ -295,7 +301,11 @@ class ImagesLegeres_Qualite {
 			return false;
 		}
 
-		return defined( 'Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR' );
+		// Les deux métriques sont exigées : si PSNR manquait alors que SSIM est là, la
+		// seconde comparaison lèverait une Error dans le bloc try et ferait basculer sur le
+		// repli PHP après avoir déjà payé le calcul SSIM natif.
+		return null !== ImagesLegeres_Compat::constante( 'METRIC_STRUCTURAL_SIMILARITY_ERROR' )
+			&& null !== ImagesLegeres_Compat::constante( 'METRIC_PEAKSIGNALTONOISERATIO' );
 	}
 
 	/**

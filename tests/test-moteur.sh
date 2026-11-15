@@ -442,6 +442,119 @@ else
   verifier "qualite sur un identifiant inexistant : motif affiché" 1
 fi
 
+echo "--- qualite sans les constantes d'ImageMagick 7 (I1b, 2026-11-15) ---"
+# L'hébergement a ImageMagick 6.9.11 : `Imagick::ALPHACHANNEL_OFF` n'y existe pas, et une
+# constante de classe absente lève une Error FATALE en PHP 8 (pas un avertissement).
+# `wp images-legeres qualite` y mourait donc avant même d'atteindre le repli SSIM en PHP :
+# aucune mesure n'a jamais pu être prise sur le site. Le conteneur a ImageMagick 7 :
+# l'absence est simulée par les constantes d'environnement de test de ImagesLegeres_Compat.
+echo "ImageMagick du conteneur : $(wp eval 'echo Imagick::getVersion()["versionString"];' | tr -d '\r')"
+
+# Trois paires source/WebP, écrites dans le dossier des témoins (monté depuis l'hôte, donc
+# relisables par tests/fixtures ou par un témoin externe comme ssim.py).
+PAIRES_SSIM=$(wp eval '
+$temoins = "/var/www/html/wp-content/plugins/images-legeres/tests/fixtures/tmp";
+$sortie  = $temoins . "/f7-ssim";
+if ( ! is_dir( $sortie ) ) { mkdir( $sortie, 0777, true ); }
+$paires = array(
+  array( "jpeg471-q82", $temoins . "/jpeg-471.jpg", 82 ),
+  array( "jpeg2560-q90", $temoins . "/jpeg-2560.jpg", 90 ),
+  array( "pngopaque-q82", $temoins . "/png-opaque.png", 82 ),
+);
+$noms = array();
+foreach ( $paires as $p ) {
+  list( $nom, $source, $q ) = $p;
+  if ( ! file_exists( $source ) ) { echo "MANQUE:" . $source; exit; }
+  $ext = strtolower( pathinfo( $source, PATHINFO_EXTENSION ) );
+  copy( $source, "$sortie/{$nom}_src.$ext" );
+  ImagesLegeres_Qualite::encoder_vers( "$sortie/{$nom}_src.$ext", "$sortie/{$nom}_w.webp", $q );
+  $noms[] = $nom;
+}
+echo implode( ",", $noms );' | tr -d '\r')
+verifier "trois paires source/WebP écrites pour la mesure (obtenu $PAIRES_SSIM)" \
+  $([[ "$PAIRES_SSIM" == "jpeg471-q82,jpeg2560-q90,pngopaque-q82" ]] && echo 0 || echo 1)
+
+# `comparer_fichiers()` est le code qui mourait : c'est lui qui normalise l'alpha avant de
+# choisir la métrique. On l'appelle sous trois configurations de constantes.
+mesurer_paires() {
+  # $1 = PHP de définition des constantes de simulation, joué avant l'appel.
+  wp eval "$1"'
+  $sortie = "/var/www/html/wp-content/plugins/images-legeres/tests/fixtures/tmp/f7-ssim";
+  $lignes = array();
+  foreach ( array( "jpeg471-q82" => "jpg", "jpeg2560-q90" => "jpg", "pngopaque-q82" => "png" ) as $nom => $ext ) {
+    $m = ImagesLegeres_Qualite::comparer_fichiers( "$sortie/{$nom}_src.$ext", "$sortie/{$nom}_w.webp" );
+    if ( is_wp_error( $m ) ) { $lignes[] = $nom . "=ERREUR:" . $m->get_error_message(); continue; }
+    $lignes[] = sprintf( "%s=%s:%.5f", $nom, $m["methode_ssim"], $m["ssim"] );
+  }
+  echo implode( " ", $lignes );' | tr -d '\r'
+}
+
+SIM_IM6='define( "IMAGES_LEGERES_SIMULER_IMAGEMAGICK_6", true );'
+SIM_APLAT='define( "IMAGES_LEGERES_SIMULER_IMAGEMAGICK_6", true ); define( "IMAGES_LEGERES_MASQUER_CONSTANTES_IMAGICK", "ALPHACHANNEL_DEACTIVATE,ALPHACHANNEL_REMOVE" );'
+
+MESURE_IM6=$(mesurer_paires "$SIM_IM6")
+echo "ImageMagick 6 simulé : $MESURE_IM6"
+verifier "aucune erreur ni Error fatale sans les constantes d'ImageMagick 7" \
+  $(echo "$MESURE_IM6" | grep -qi 'ERREUR\|Undefined constant\|Fatal error' && echo 1 || echo 0)
+verifier "les trois paires rendent un SSIM chiffré par le repli PHP" \
+  $(php -r '
+  $t = explode( " ", trim( $argv[1] ) );
+  if ( 3 !== count( $t ) ) { exit( 1 ); }
+  foreach ( $t as $l ) {
+    if ( ! preg_match( "/^[a-z0-9-]+=php:([0-9.]+)$/", $l, $c ) ) { exit( 1 ); }
+    if ( (float) $c[1] <= 0 || (float) $c[1] > 1 ) { exit( 1 ); }
+  }
+  exit( 0 );' "$MESURE_IM6" && echo 0 || echo 1)
+
+# Dernier repli du retrait d'alpha : aucune des trois constantes disponible, l'image est
+# composée sur un fond blanc opaque. Aucune version réelle d'ImageMagick ne l'atteint ; il
+# faut masquer aussi les deux constantes communes pour l'exercer.
+MESURE_APLAT=$(mesurer_paires "$SIM_APLAT")
+echo "aplatissement forcé    : $MESURE_APLAT"
+verifier "le repli d'aplatissement rend lui aussi trois SSIM chiffrés" \
+  $(php -r '
+  $t = explode( " ", trim( $argv[1] ) );
+  if ( 3 !== count( $t ) ) { exit( 1 ); }
+  foreach ( $t as $l ) {
+    if ( ! preg_match( "/^[a-z0-9-]+=php:([0-9.]+)$/", $l, $c ) ) { exit( 1 ); }
+    if ( (float) $c[1] <= 0 || (float) $c[1] > 1 ) { exit( 1 ); }
+  }
+  exit( 0 );' "$MESURE_APLAT" && echo 0 || echo 1)
+
+# Le moyen employé pour retirer l'alpha ne doit pas déplacer le chiffre : tolérance 0,003,
+# celle retenue pour l'étalonnage contre le témoin ssim.py.
+verifier "les deux moyens de retrait d'alpha donnent le même SSIM à 0,003 près" \
+  $(php -r '
+  $lire = function ( $s ) {
+    $o = array();
+    foreach ( explode( " ", trim( $s ) ) as $l ) {
+      $p = explode( "=", $l );
+      if ( 2 !== count( $p ) ) { continue; }
+      $v = explode( ":", $p[1] );
+      $o[ $p[0] ] = (float) end( $v );
+    }
+    return $o;
+  };
+  $a = $lire( $argv[1] );
+  $b = $lire( $argv[2] );
+  if ( 3 !== count( $a ) || 3 !== count( $b ) ) { exit( 1 ); }
+  foreach ( $a as $nom => $v ) {
+    if ( ! isset( $b[ $nom ] ) ) { exit( 1 ); }
+    $ecart = abs( $v - $b[ $nom ] );
+    fprintf( STDERR, "  %s : %.5f contre %.5f, écart %.5f\n", $nom, $v, $b[ $nom ], $ecart );
+    if ( $ecart > 0.003 ) { exit( 1 ); }
+  }
+  exit( 0 );' "$MESURE_IM6" "$MESURE_APLAT" && echo 0 || echo 1)
+
+# Aucune constante propre à ImageMagick 7 ne doit être écrite en dur hors de la couche de
+# compatibilité : c'est la régression qui a coûté la mesure en production.
+EN_DUR=$(cd /home/ubuntu 2>/dev/null; true)
+EN_DUR=$(grep -rn "Imagick::ALPHACHANNEL_OFF\|Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR" \
+  "$(dirname "${BASH_SOURCE[0]}")/../includes" 2>/dev/null \
+  | grep -v "class-imageslegeres-compat.php" | grep -v "^\s*\*" | grep -v "//" | grep -v " \* ")
+verifier "aucune constante d'ImageMagick 7 écrite en dur hors de ImagesLegeres_Compat" \
+  $([[ -z "$EN_DUR" ]] && echo 0 || { echo "$EN_DUR"; echo 1; })
+
 echo "---"
 if [[ "$ECHECS" -eq 0 ]]; then
   echo "TOUS LES TESTS PASSENT"

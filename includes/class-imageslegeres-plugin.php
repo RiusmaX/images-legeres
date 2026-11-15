@@ -30,6 +30,14 @@ class ImagesLegeres_Plugin {
 		add_action( 'upgrader_process_complete', array( __CLASS__, 'apres_mise_a_jour' ), 10, 2 );
 		self::verifier_version();
 
+		// Les migrations de réglages ne passent PAS par la comparaison de version. La mise
+		// à jour du 2026-11-15 en production portait le même `0.1.0` avant et après : la
+		// comparaison ne voyait rien, le seuil de gain est resté à 10 % et a laissé
+		// 87 sous-tailles sans WebP (I1b). Un registre nommé, lu dans l'option de réglages
+		// — déjà autoloadée, donc sans requête supplémentaire — ne dépend plus de la
+		// discipline de celui qui publie.
+		ImagesLegeres_Reglages::migrer();
+
 		// F5 : ni éditeur branché sur `wp_image_editors`, ni modification d'une taille
 		// déclarée (`woocommerce_get_image_size_single`). Les deux faisaient écrire une
 		// sous-taille harmonisée sous le nom de fichier natif, servie à TOUS les visiteurs
@@ -90,11 +98,10 @@ class ImagesLegeres_Plugin {
 		}
 
 		// Mise à jour déposée en FTP ou par Git : l'activation n'est pas repassée, c'est ici
-		// que la migration du seuil de gain a lieu. La table d'inventaire des harmonisées,
-		// elle, se crée à la première écriture (sinon elle ressort en orphelin après
-		// « Tout rendre », qui vient de la supprimer).
-		ImagesLegeres_Reglages::migrer();
-
+		// que les protections sont remises. Les migrations de réglages, elles, ne dépendent
+		// plus de ce chemin (cf. `demarrer()`). La table d'inventaire des harmonisées se
+		// crée à la première écriture (sinon elle ressort en orphelin après « Tout rendre »,
+		// qui vient de la supprimer).
 		self::reposer_protections();
 	}
 

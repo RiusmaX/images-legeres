@@ -4,6 +4,8 @@ Extension WordPress qui convertit les images en WebP, retaille les originaux sur
 harmonise les photos produit WooCommerce au ratio cible et sert la même photo aux flux
 Google et Meta. Aucune dépendance réseau, aucune clé, aucun appel à un service externe.
 
+**Version 0.2.0.** Requiert WordPress 6.0 et PHP 8.1.
+
 ## Installation
 
 1. Copier le dossier dans `wp-content/plugins/images-legeres`.
@@ -71,12 +73,34 @@ Deux valeurs par défaut méritent d'être connues :
   seuil ne sert plus qu'à écarter le cas où le WebP pèserait **plus lourd** que l'original ;
   le JPEG reste alors servi, et `wp images-legeres status` le compte
   (`fichiers_webp_plus_lourd`). Un site installé avant cette décision est migré au premier
-  changement de version. C'est l'ancien seuil de 10 % qui avait laissé 87 sous-tailles sans
-  WebP en production.
+  chargement de l'extension après la mise à jour (cf. « Migrations de réglages »). C'est
+  l'ancien seuil de 10 % qui avait laissé 87 sous-tailles sans WebP en production.
 - **`ssim_imagick_actif` est désactivé** : le SSIM est toujours celui calculé par
   l'extension sur la **luminance**. `Imagick::compareImages()` moyenne sur les canaux RVB et
   rend une valeur plus basse (0,99399 contre 0,99738 sur la même paire) : le même seuil ne
   voudrait pas dire la même chose d'un hébergement à l'autre.
+
+### Migrations de réglages
+
+Une mise à jour peut changer la valeur par défaut d'un réglage. Un site déjà installé garde
+l'option telle qu'elle a été enregistrée : il faut donc la migrer.
+
+Ces migrations **ne dépendent pas du numéro de version** de l'extension. Elles portent un
+nom, et chaque site retient ceux qu'il a déjà joués, dans la clé `migrations_appliquees` de
+l'option `images_legeres_reglages` — pas dans une option à part, qui ressortirait en
+orphelin après « Tout rendre ». Le registre est consulté à chaque chargement de l'extension ;
+l'option étant autoloadée, cela ne coûte aucune requête, et rien n'est écrit tant qu'aucune
+migration ne manque.
+
+Pourquoi pas le numéro de version : la mise à jour du 2026-11-15 en production portait le
+même `0.1.0` avant et après. La comparaison de version ne voyait rien, la migration du seuil
+de gain n'est jamais partie, et il a fallu la passer à la main. Une mise à jour déposée par
+Git ou par archive ne change pas forcément le numéro ; s'y fier, c'est parier sur la
+discipline de celui qui publie.
+
+Ajouter une migration : une entrée nommée dans `ImagesLegeres_Reglages::migrations()`, qui
+reçoit le tableau des réglages enregistrés et rend le tableau modifié. Elle doit être
+**idempotente** — elle peut être rejouée sur un site où son effet est déjà acquis.
 
 ## Ligne de commande
 
@@ -131,7 +155,18 @@ La colonne `methode_ssim` dit d'où vient le chiffre. `imagick` : la métrique d
 avec la définition de Wang et al. 2004 — fenêtre gaussienne 11×11 d'écart-type 1,5 sur la
 luminance Rec. 709, celle de `compare -metric SSIM`. Ce repli sert sur les hébergements dont
 l'ImageMagick est en version 6 (Infomaniak mutualisé, 6.9.11) : la métrique y est absente, et
-la commande y mourait sans message avant la mission F4. Étalonné à 0,0009 près du témoin de
+la commande y mourait sans message avant la mission F4.
+
+Le repli n'était pourtant toujours pas atteint sur l'hébergement : la normalisation qui le
+précède écrivait `Imagick::ALPHACHANNEL_OFF`, une constante d'ImageMagick 7, et une constante
+de classe absente lève une `Error` fatale en PHP 8. Depuis, toute constante `Imagick::` dont
+la présence dépend de la version passe par `ImagesLegeres_Compat` : retrait de l'alpha par
+`ALPHACHANNEL_OFF`, sinon `ALPHACHANNEL_DEACTIVATE` (ImageMagick 6), sinon
+`ALPHACHANNEL_REMOVE`, sinon aplatissement sur fond blanc. Deux constantes de `wp-config.php`
+permettent d'exercer ces chemins là où ImageMagick 7 est installé :
+`IMAGES_LEGERES_SIMULER_IMAGEMAGICK_6` masque les constantes propres à ImageMagick 7, et
+`IMAGES_LEGERES_MASQUER_CONSTANTES_IMAGICK` (liste séparée par des virgules) en masque
+d'autres. Aucune des deux n'est définie en production. Étalonné à 0,0009 près du témoin de
 référence sur huit paires, photos de bougies réelles comprises. La commande rend toujours un
 code de sortie non nul dès qu'une pièce jointe n'a pas pu être mesurée, avec son motif.
 

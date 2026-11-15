@@ -314,9 +314,15 @@ class ImagesLegeres_Flux {
 				ImagesLegeres_Rendu::appliquer_fond_ajoute( $image, $dimension, $dimension );
 			}
 
+			// Retrait de l'alpha AVANT le format et la qualité : le dernier repli de
+			// ImagesLegeres_Compat (aplatissement) rend un nouvel objet Imagick, qui ne
+			// porterait pas les réglages d'encodage posés sur l'ancien. La constante
+			// retenue dépend de la version d'ImageMagick de l'hébergement — en écrire une
+			// en dur lève une Error fatale là où elle n'existe pas (I1b, 2026-11-15).
+			$image = ImagesLegeres_Compat::retirer_alpha( $image );
+
 			$image->setImageFormat( 'jpeg' );
 			$image->setImageCompressionQuality( $qualite );
-			$image->setImageAlphaChannel( Imagick::ALPHACHANNEL_REMOVE );
 
 			wp_mkdir_p( self::dossier_absolu() );
 			ImagesLegeres_Protection::poser_flux();
