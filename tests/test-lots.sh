@@ -122,9 +122,11 @@ echo count( $instantane );
 echo " lignes 'fait' mises en instantané avant reprise"
 
 echo "--- 3. reprise : relance jusqu'à épuisement de la file, sans sauter ni retraiter ---"
-# Plage horaire ouverte en continu (début = fin) : ce test porte sur la reprise, pas sur la
-# plage horaire, vérifiée séparément à l'étape 4.
-wp eval '$r = ImagesLegeres_Reglages::tout(); $r["plage_horaire_debut"] = "00:00"; $r["plage_horaire_fin"] = "00:00"; ImagesLegeres_Reglages::enregistrer($r);' >/dev/null
+# Plage horaire ouverte en continu (début = fin) et seuil de charge réglé haut (réglage de ce
+# WordPress jetable, pas le défaut du code) : ces tests portent sur la reprise et la plage
+# horaire, pas sur la charge réelle de la machine de l'usine au moment du test (garde-fou
+# vérifié isolément à l'étape 4bis, seuil réglé très bas).
+wp eval '$r = ImagesLegeres_Reglages::tout(); $r["plage_horaire_debut"] = "00:00"; $r["plage_horaire_fin"] = "00:00"; $r["charge_max_serveur"] = 1000.0; ImagesLegeres_Reglages::enregistrer($r);' >/dev/null
 RESULTAT_RUN=$(wp images-legeres run --limite=0 --format=json)
 echo "$RESULTAT_RUN"
 
@@ -192,6 +194,37 @@ echo "--- forcer ignore la plage horaire ---"
 wp images-legeres run --limite=3 --forcer --format=json
 ETATS_FORCE=$(wp eval 'echo json_encode(ImagesLegeres_File::compter_par_etat());' | tr -d '\r')
 verifier "--forcer traite malgré la plage horaire ($ETATS_FORCE)" $(echo "$ETATS_FORCE" | grep -qE '"a-faire"' && echo 1 || echo 0)
+
+echo "--- 4bis. le garde-fou de charge bloque bien quand la charge dépasse le seuil ---"
+# Plage horaire remise continue (l'étape 4 l'avait posée hors de "maintenant") pour isoler le
+# garde-fou de charge de celui de la plage horaire. Seuil réglé très bas (réglage de ce
+# WordPress jetable, le défaut du code reste 4.0) : le garde-fou doit bloquer quel que soit
+# l'état réel de la machine au moment du test.
+wp eval '
+$uploads = wp_upload_dir();
+for ($i = 301; $i <= 302; $i++) {
+  $nom = sprintf("temoin-lots-charge-%03d.jpg", $i);
+  $destination = trailingslashit($uploads["path"]) . $nom;
+  copy("/tmp/il-temoin-lots.jpg", $destination);
+  wp_insert_attachment(array("post_mime_type" => "image/jpeg", "post_title" => $nom, "post_status" => "inherit"), $destination);
+}
+$r = ImagesLegeres_Reglages::tout();
+$r["plage_horaire_debut"] = "00:00";
+$r["plage_horaire_fin"]   = "00:00";
+$r["charge_max_serveur"]  = 0.0001;
+ImagesLegeres_Reglages::enregistrer($r);
+' >/dev/null
+
+RESULTAT_CHARGE=$(wp images-legeres run --limite=0 --format=json)
+echo "$RESULTAT_CHARGE"
+
+verifier "message d'arrêt anticipé pour charge trop élevée" $(echo "$RESULTAT_CHARGE" | grep -q "arrêt anticipé" && echo "$RESULTAT_CHARGE" | grep -q "charge serveur trop élevée" && echo 0 || echo 1)
+verifier "aucune ligne traitée, seuil de charge dépassé" $(echo "$RESULTAT_CHARGE" | grep -q '"cle":"traites","valeur":"0"' && echo 0 || echo 1)
+ETATS_CHARGE=$(wp eval 'echo json_encode(ImagesLegeres_File::compter_par_etat());' | tr -d '\r')
+verifier "les 2 nouvelles lignes restent a-faire (seuil de charge dépassé) : $ETATS_CHARGE" $(echo "$ETATS_CHARGE" | grep -q '"a-faire":2' && echo 0 || echo 1)
+
+# Seuil remis haut pour le reste du script (sections suivantes).
+wp eval '$r = ImagesLegeres_Reglages::tout(); $r["charge_max_serveur"] = 1000.0; ImagesLegeres_Reglages::enregistrer($r);' >/dev/null
 
 echo "--- 5. point d'accroche flux : se déclenche seulement si un réglage de flux change ---"
 RESULTAT_FLUX=$(wp eval '
