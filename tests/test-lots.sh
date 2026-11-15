@@ -5,6 +5,11 @@
 # depuis l'image `cli` et l'exécute avec le PHP du conteneur `wordpress`. Ne modifie pas
 # tests/env/.
 #
+# EXIGE UN WORDPRESS JETABLE NEUF (tests/env/up.sh sur des volumes vides) : la suite compte
+# les lignes de la file et les pièces jointes images. Enchaînée derrière une autre suite sur
+# la même instance, elle échoue sur ses comptages (relevé par le contrôle qa du 2026-11-15,
+# 4 assertions de comptage) sans qu'aucun défaut produit soit en cause.
+#
 # Usage : IL_ENV_NAME=... IL_HTTP_PORT=... IL_DB_PORT=... bash tests/test-lots.sh
 #         (tests/env/up.sh avec les mêmes variables doit déjà avoir tourné)
 set -uo pipefail

@@ -10,8 +10,12 @@
 # Imagick utilisable, ce script récupère le binaire wp-cli et l'exécute avec le PHP du
 # conteneur `wordpress`. Ne modifie pas tests/env/.
 #
-# Usage : bash tests/test-flux.sh   (tests/env/up.sh doit déjà avoir tourné, avec
-# google-listings-and-ads et facebook-for-woocommerce installés, pas forcément actifs).
+# EXIGE UN WORDPRESS JETABLE NEUF (tests/env/up.sh sur des volumes vides). La suite installe
+# elle-même les deux extensions tierces aux versions attendues : les supposer présentes
+# faisait échouer la suite sur un WordPress neuf (relevé par le contrôle qa du 2026-11-15).
+# Ne pas enchaîner les suites sur la même instance.
+#
+# Usage : bash tests/test-flux.sh   (tests/env/up.sh doit déjà avoir tourné)
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/env"
@@ -42,6 +46,35 @@ verifier() {
     ECHECS=$((ECHECS + 1))
   fi
 }
+
+# Versions tierces contre lesquelles le branchement par filtre a été écrit (mission 18,
+# ADR 0006). Épinglées : le point de branchement dépend de la version, une montée silencieuse
+# changerait ce que la suite prouve. Installées, pas activées — le test ne lit que leurs
+# fichiers et leurs filtres.
+VERSION_GLA=3.10.0
+VERSION_META=3.7.8
+
+echo "--- préparation : extensions tierces aux versions attendues ---"
+installer_extension() {
+  local slug="$1" version="$2"
+  local installee
+  installee=$(wp plugin get "$slug" --field=version 2>/dev/null | tr -d '\r')
+
+  if [[ "$installee" == "$version" ]]; then
+    echo "OK   - $slug $version déjà installé"
+    return 0
+  fi
+
+  if wp plugin install "$slug" --version="$version" --force >/dev/null 2>&1; then
+    installee=$(wp plugin get "$slug" --field=version 2>/dev/null | tr -d '\r')
+  fi
+
+  verifier "$slug installé en version $version (obtenu ${installee:-aucune})" \
+    $([[ "$installee" == "$version" ]] && echo 0 || echo 1)
+}
+
+installer_extension google-listings-and-ads "$VERSION_GLA"
+installer_extension facebook-for-woocommerce "$VERSION_META"
 
 echo "--- préparation : réglages par défaut, flux actif (général, Google, Meta) ---"
 wp eval 'ImagesLegeres_Reglages::enregistrer(ImagesLegeres_Reglages::defauts());' >/dev/null

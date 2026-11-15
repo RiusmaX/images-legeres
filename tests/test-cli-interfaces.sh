@@ -9,6 +9,9 @@
 # utilisable, ce script tourne donc depuis l'hôte avec le phar `wp` exécuté par le PHP du
 # conteneur `wordpress`. Ne modifie pas tests/env/.
 #
+# EXIGE UN WORDPRESS JETABLE NEUF (tests/env/up.sh sur des volumes vides). Ne pas enchaîner
+# les suites sur la même instance.
+#
 # Usage : bash tests/test-cli-interfaces.sh   (tests/env/up.sh doit déjà avoir tourné)
 set -uo pipefail
 

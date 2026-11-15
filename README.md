@@ -31,6 +31,7 @@ wp images-legeres status [--format=table|json|yaml]
 wp images-legeres orphelins [--format=table|json|csv|yaml]
 wp images-legeres convert <id> [--dry-run]
 wp images-legeres run [--limite=<n>] [--forcer] [--format=table|json|yaml]
+wp images-legeres qualite <id>... [--qualite=<n>] [--format=table|json|yaml|csv]
 ```
 
 `orphelins` liste ce qui resterait de l'extension après une désinstallation (table, options,
@@ -38,6 +39,34 @@ métas, drop-ins, dossier `uploads/images-legeres`) ; une liste vide signifie qu
 rien. `convert` traite une pièce jointe (conversion WebP, retaille si le réglage est actif).
 `run` lance le lot hors serveur web (file Action Scheduler ou boucle WP-CLI synchrone),
 refuse de tourner hors plage horaire sauf `--forcer`.
+
+### Mesurer la perte : `qualite`
+
+`qualite` mesure SSIM et PSNR entre l'original d'une pièce jointe et son WebP — la question
+« la perte est-elle invisible ? » posée aux vraies photos du site plutôt qu'à des témoins de
+laboratoire. C'est l'outil de recette à passer sur une production avant d'élargir la
+conversion.
+
+```
+wp images-legeres qualite 12 13 14
+wp images-legeres qualite 12 --qualite=95        # essaie un réglage sans rien écrire
+```
+
+Deux précautions, sans lesquelles le chiffre ne veut rien dire :
+
+- **la comparaison se fait à dimensions égales.** Si le moteur a retaillé l'original avant de
+  le convertir, comparer l'original d'avant retaille au WebP d'après mesure la retaille ET la
+  compression, et impute à la seconde ce que la première a coûté (sur une photo produit
+  2560 px ramenée à 1920 px, la retaille seule coûte déjà 0,002 de SSIM). La colonne
+  `source_retaillee` dit quand la normalisation a joué ;
+- **la source est presque toujours déjà compressée.** Un JPEG de site est une image avec
+  perte : le SSIM mesuré est celui d'une deuxième génération de perte, pas celui d'un WebP
+  face à un original d'appareil photo. Un SSIM de 0,975 sur un JPEG de 2560 px n'a pas le
+  même sens que sur un PNG d'aplats.
+
+Sans `--qualite`, la commande lit le fichier `.webp` réellement présent. Avec `--qualite`,
+elle réencode dans un fichier temporaire, mesure et efface : rien n'est écrit à côté de
+l'image.
 
 ### Interfaces usine (recadrage et textes alternatifs)
 
@@ -85,7 +114,25 @@ tests/env/up.sh
 tests/env/down.sh
 ```
 
-Tests : `tests/test-activation.sh` (exécuté dans le conteneur, voir ce fichier).
+Tests : `tests/test-activation.sh` (exécuté dans le conteneur, voir ce fichier),
+`tests/test-moteur.sh`, `tests/test-recadrage.sh`, `tests/test-cli-interfaces.sh`,
+`tests/test-flux.sh`, `tests/test-lots.sh`.
+
+**Chaque suite veut un WordPress jetable neuf** (`tests/env/up.sh` sur des volumes vides).
+Elles comptent des pièces jointes et des lignes de file : enchaînées sur la même instance,
+elles échouent sur leurs comptages sans qu'aucun défaut du produit soit en cause. Chaque
+suite génère ou installe elle-même ce dont elle a besoin (témoins, extensions tierces).
+
+Calibrage de la qualité WebP (spec § 7) :
+
+```
+wp eval-file tests/fixtures/generer-aplats.php <dossier>/aplats
+wp eval-file tests/mesure-balayage.php <dossier-du-corpus> 80,85,88,90,92,95,98
+```
+
+Le corpus attend un sous-dossier par famille d'images (`produit/`, `ambiance/`, `aplats/`).
+Le TSV produit donne SSIM, PSNR et poids par image et par qualité. Les photos réelles d'un
+client ne sont jamais commitées : `tests/fixtures/corpus-f2/` est ignoré par git.
 
 ## Licence
 

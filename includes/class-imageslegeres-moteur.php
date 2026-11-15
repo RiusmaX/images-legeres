@@ -120,9 +120,7 @@ class ImagesLegeres_Moteur {
 			$largeur = $image->getImageWidth();
 			$hauteur = $image->getImageHeight();
 
-			$image->setImageFormat( 'webp' );
-			$image->setImageCompressionQuality( (int) $qualite );
-			$image->setOption( 'webp:method', '6' );
+			ImagesLegeres_Qualite::appliquer_encodage_webp( $image, $qualite );
 
 			$tmp = $chemin . '.webp.tmp-' . wp_generate_password( 8, false, false );
 			$image->writeImage( $tmp );

@@ -10,6 +10,10 @@
 # depuis l'image `cli` et l'exécute avec le PHP du conteneur `wordpress` (délégués complets),
 # pour avoir à la fois wp-cli et un Imagick qui fonctionne. Ne modifie pas tests/env/.
 #
+# EXIGE UN WORDPRESS JETABLE NEUF (tests/env/up.sh sur des volumes vides) : la suite pose
+# et efface des réglages globaux (ratio cible, harmonisation) et crée ses propres pièces
+# jointes. Ne pas enchaîner les suites sur la même instance.
+#
 # Usage : bash tests/test-recadrage.sh   (tests/env/up.sh doit déjà avoir tourné)
 set -uo pipefail
 
@@ -269,6 +273,31 @@ RECTANGLE_APRES_REFUS=$(wp eval "
 echo \$r['x'] . ',' . \$r['y'] . ',' . \$r['w'] . ',' . \$r['h'];
 " | tr -d '\r')
 verifier "les refus n'ont rien écrit : le rectangle valide posé plus haut est intact ($RECTANGLE_APRES_REFUS)" $([[ "$RECTANGLE_APRES_REFUS" == "0.2,0.2,0.6,0.6" ]] && echo 0 || echo 1)
+
+# Le plancher de 500 px porte sur le PLUS PETIT côté (min), pas sur le plus grand (max) :
+# un rectangle 480x720 au ratio 2:3 ferait 480 px de large, sous le plancher, alors que son
+# plus grand côté tient largement. Les seuls cas sous 500 px testés jusqu'ici étaient carrés
+# (400x400), où min et max sont égaux : remplacer min par max dans
+# ImagesLegeres_Recadrage::valider() passait toute la suite (mutation vérifiée par le
+# contrôle qa du 2026-11-15). Ces deux cas non carrés ferment le trou.
+echo "--- plancher de 500 px sur un ratio non carré (2:3) ---"
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("ratio_cible" => "2:3"));' >/dev/null
+
+TROP_PETIT_NON_CARRE=$(wp eval "
+\$r = ImagesLegeres_Recadrage::definir( $ID1, 0, 0, 480, 720, 1000, 1500 );
+echo is_wp_error( \$r ) ? \$r->get_error_code() : 'accepte';
+" | tr -d '\r')
+verifier "rectangle 480x720 (2:3, petit côté 480 < 500, grand côté 720 >= 500) : refusé pour taille insuffisante (code $TROP_PETIT_NON_CARRE)" $([[ "$TROP_PETIT_NON_CARRE" == "images_legeres_trop_petit" ]] && echo 0 || echo 1)
+
+ASSEZ_GRAND_NON_CARRE=$(wp eval "
+\$r = ImagesLegeres_Recadrage::definir( $ID1, 0, 0, 520, 780, 1000, 1500 );
+echo is_wp_error( \$r ) ? \$r->get_error_code() : 'accepte';
+" | tr -d '\r')
+verifier "rectangle 520x780 (2:3, petit côté 520 >= 500) : accepté (obtenu $ASSEZ_GRAND_NON_CARRE)" $([[ "$ASSEZ_GRAND_NON_CARRE" == "accepte" ]] && echo 0 || echo 1)
+
+# Remise du ratio cible par défaut : la suite continue sur du 1:1.
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("ratio_cible" => "1:1"));' >/dev/null
+wp eval "ImagesLegeres_Recadrage::definir( $ID1, 200, 200, 600, 600, 1000, 1000 );" >/dev/null
 
 echo "--- effacer() retire le rectangle ---"
 wp eval "ImagesLegeres_Recadrage::effacer( $ID1 );" >/dev/null

@@ -6,6 +6,10 @@
 # depuis l'image `cli` et l'exécute avec le PHP du conteneur `wordpress`, pour avoir à la
 # fois wp-cli et le bon Imagick. Ne modifie pas tests/env/.
 #
+# EXIGE UN WORDPRESS JETABLE NEUF (tests/env/up.sh sur des volumes vides). Les assertions
+# comptent les pièces jointes et les lignes de la table : les images laissées par une autre
+# suite les font échouer. Ne pas enchaîner les suites sur la même instance.
+#
 # Usage : bash tests/test-moteur.sh   (tests/env/up.sh doit déjà avoir tourné)
 set -uo pipefail
 
@@ -28,6 +32,12 @@ wp() {
 TEMOINS=/var/www/html/wp-content/plugins/images-legeres/tests/fixtures/tmp
 UPLOADS=/var/www/html/wp-content/uploads
 ECHECS=0
+
+# Les témoins sont générés ICI, pas supposés présents : sans cet appel, la suite entière
+# échoue sur un WordPress neuf faute de fichiers à importer, avant d'avoir testé quoi que ce
+# soit (relevé par le contrôle qa du 2026-11-15, 29 échecs).
+echo "--- préparation : génération des témoins ---"
+wp eval-file /var/www/html/wp-content/plugins/images-legeres/tests/fixtures/generer-temoins.php
 
 verifier() {
   local description="$1"
