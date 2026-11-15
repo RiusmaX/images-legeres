@@ -5,9 +5,14 @@
  * Action Scheduler pour le quotidien (une image par action, concurrence 1, rechargée par
  * cette classe à chaque action), WP-CLI pour les gros lots, hors serveur web.
  *
- * Régénération et nettoyage des fichiers de flux (ADR 0006) : hors périmètre de cette
- * mission. `HOOK_FLUX_ACCROCHE` est le seul point d'accroche posé : il se déclenche quand un
- * réglage de flux change, sans qu'aucun gestionnaire n'y soit encore attaché.
+ * Régénération et nettoyage des fichiers de flux (ADR 0006 point 7, mission 19b) : chaque
+ * image traitée par la file passe aussi par `ImagesLegeres_Flux::generer()` (sans effet sur
+ * une image qui n'est pas une image de produit — c'est elle qui le vérifie). Quand un réglage
+ * de flux change (`HOOK_FLUX_ACCROCHE`), les images de produit déjà dans la file sont remises
+ * à `a-faire` : elles repassent par `traiter_un()` au prochain passage de la file (Action
+ * Scheduler ou `wp images-legeres run`), qui régénère leur fichier de flux avec la nouvelle
+ * empreinte et supprime l'ancien — `ImagesLegeres_Flux::generer()` s'en charge seul, aucune
+ * logique de nettoyage n'est dupliquée ici.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -31,6 +36,7 @@ class ImagesLegeres_Lot {
 
 	public static function enregistrer() {
 		add_action( self::HOOK, array( __CLASS__, 'traiter_action' ) );
+		add_action( self::HOOK_FLUX_ACCROCHE, array( __CLASS__, 'remettre_flux_en_file' ) );
 	}
 
 	/**
@@ -125,7 +131,8 @@ class ImagesLegeres_Lot {
 	private static function traiter_un( $attachment_id ) {
 		ImagesLegeres_File::marquer_en_cours( $attachment_id );
 
-		$resultats = ImagesLegeres_Moteur::traiter_attachment( $attachment_id );
+		$resultats   = ImagesLegeres_Moteur::traiter_attachment( $attachment_id );
+		$resultats[] = ImagesLegeres_Flux::generer( $attachment_id );
 
 		list( $etat, $motif ) = self::resumer_resultats( $resultats );
 
@@ -280,10 +287,20 @@ class ImagesLegeres_Lot {
 	}
 
 	/**
-	 * Point d'accroche générique (spec § 11 mission 19, « prévoir seulement le point
-	 * d'accroche ») : si un réglage de flux a changé, signale-le. Aucun gestionnaire n'est
-	 * encore attaché à `HOOK_FLUX_ACCROCHE` — la régénération et le nettoyage des fichiers de
-	 * flux sont le périmètre d'une mission dédiée (ADR 0006).
+	 * Remet à `a-faire` les lignes de la file dont la pièce jointe est une image de produit :
+	 * gestionnaire de `HOOK_FLUX_ACCROCHE` (ADR 0006 point 7). Ces lignes repassent par
+	 * `traiter_un()` au prochain passage de la file, qui régénère leur fichier de flux avec
+	 * les réglages à jour et supprime l'ancien. N'amorce ni ne démarre la file : un changement
+	 * de réglage ne fait pas démarrer seul un traitement en arrière-plan (même règle qu'à
+	 * l'activation de l'extension, ADR 0004).
+	 */
+	public static function remettre_flux_en_file() {
+		ImagesLegeres_File::remettre_images_produit_a_faire();
+	}
+
+	/**
+	 * Point d'accroche générique (spec § 11 mission 19) : si un réglage de flux a changé,
+	 * signale-le. Gestionnaire attaché : `remettre_flux_en_file()` (ADR 0006 point 7).
 	 */
 	public static function signaler_si_reglages_flux_changes( array $avant, array $apres ) {
 		foreach ( self::CLES_REGLAGES_FLUX as $cle ) {

@@ -225,6 +225,86 @@ else
   verifier "aucun drop-in posé" 0
 fi
 
+echo "--- 7. changer un réglage de flux remet l'image produit en file ; la file régénère le fichier et supprime l'ancien ---"
+# Plage horaire continue à nouveau (étape 4 l'avait posée hors de "maintenant") : ce test porte
+# sur la régénération du flux, pas sur la plage horaire.
+wp eval '$r = ImagesLegeres_Reglages::tout(); $r["plage_horaire_debut"] = "00:00"; $r["plage_horaire_fin"] = "00:00"; ImagesLegeres_Reglages::enregistrer($r);' >/dev/null
+
+INFOS_PRODUIT=$(wp eval '
+$produit_id = wp_insert_post( array( "post_type" => "product", "post_title" => "Bougie témoin lots", "post_status" => "publish" ) );
+
+$uploads     = wp_upload_dir();
+$nom         = "temoin-lots-produit.jpg";
+$destination = trailingslashit( $uploads["path"] ) . $nom;
+$image       = new Imagick();
+$image->newImage( 900, 900, new ImagickPixel( "blue" ) );
+$image->setImageFormat( "jpeg" );
+$image->writeImage( $destination );
+$image->clear();
+$image->destroy();
+
+$image_id = wp_insert_attachment( array(
+  "post_mime_type" => "image/jpeg",
+  "post_title"      => $nom,
+  "post_status"     => "inherit",
+  "post_parent"     => $produit_id,
+), $destination );
+update_post_meta( $produit_id, "_thumbnail_id", $image_id );
+
+echo "$produit_id $image_id";
+' | tr -d '\r')
+read -r PRODUIT_ID IMAGE_PRODUIT_ID <<< "$INFOS_PRODUIT"
+echo "produit $PRODUIT_ID, image $IMAGE_PRODUIT_ID"
+
+wp eval '
+$reglages = ImagesLegeres_Reglages::tout();
+$reglages["image_flux_active"] = true;
+$reglages["flux_google_actif"] = true;
+$reglages["dimension_flux"]    = 600;
+ImagesLegeres_Reglages::enregistrer( $reglages );
+' >/dev/null
+
+# Isole la ligne de l'image produit dans la file (étape propre à ce test, sans effet sur la
+# régénération testée) : le reste de la file porte les 203 témoins des étapes précédentes, qui
+# passeraient devant elle (prochaine() prend la plus ancienne) et ralentiraient ce test sans
+# rien lui apporter.
+wp eval "ImagesLegeres_File::amorcer(); global \$wpdb; \$wpdb->query( \"UPDATE \" . ImagesLegeres_File::nom() . \" SET etat = 'ignore' WHERE attachment_id != ${IMAGE_PRODUIT_ID} AND etat IN ('a-faire', 'en-cours')\" );" >/dev/null
+
+# --forcer : ce test porte sur la régénération par la file, pas sur le garde-fou de charge
+# (vérifié isolément par les tests de mission 19) ; l'image isolée ci-dessus est la seule
+# ligne a-faire, donc une seule image est traitée quel que soit l'état réel de la machine.
+wp images-legeres run --limite=0 --forcer --format=json >/dev/null
+
+# Chemins rendus par flux_existant() : côté conteneur, pas côté hôte (ce script tourne sur
+# l'hôte, les tests d'existence passent donc par wp eval, pas par le -f de bash).
+fichier_existe_conteneur() {
+  [[ -n "$1" ]] && [[ "$(wp eval "echo file_exists('$1') ? '1' : '0';" | tr -d '\r')" == "1" ]]
+}
+
+FICHIER_AVANT=$(wp eval "\$f = ImagesLegeres_Flux::flux_existant(${IMAGE_PRODUIT_ID}); echo \$f ? \$f['chemin'] : '';" | tr -d '\r')
+verifier "fichier de flux produit avant changement de réglage ($FICHIER_AVANT)" $(fichier_existe_conteneur "$FICHIER_AVANT" && echo 0 || echo 1)
+
+ETAT_AVANT_CHANGEMENT=$(wp eval "\$l = ImagesLegeres_File::ligne(${IMAGE_PRODUIT_ID}); echo \$l['etat'];" | tr -d '\r')
+verifier "l'image produit est 'fait' avant le changement de réglage ($ETAT_AVANT_CHANGEMENT)" $([[ "$ETAT_AVANT_CHANGEMENT" == "fait" ]] && echo 0 || echo 1)
+
+wp eval '
+$avant = ImagesLegeres_Reglages::tout();
+$apres = $avant;
+$apres["dimension_flux"] = 500;
+ImagesLegeres_Reglages::enregistrer( $apres );
+ImagesLegeres_Lot::signaler_si_reglages_flux_changes( $avant, $apres );
+' >/dev/null
+
+ETAT_APRES_CHANGEMENT=$(wp eval "\$l = ImagesLegeres_File::ligne(${IMAGE_PRODUIT_ID}); echo \$l['etat'];" | tr -d '\r')
+verifier "le réglage de flux changé remet l'image produit en file (a-faire, obtenu $ETAT_APRES_CHANGEMENT)" $([[ "$ETAT_APRES_CHANGEMENT" == "a-faire" ]] && echo 0 || echo 1)
+
+wp images-legeres run --limite=0 --forcer --format=json >/dev/null
+
+FICHIER_APRES=$(wp eval "\$f = ImagesLegeres_Flux::flux_existant(${IMAGE_PRODUIT_ID}); echo \$f ? \$f['chemin'] : '';" | tr -d '\r')
+verifier "la file a régénéré un nouveau fichier de flux ($FICHIER_AVANT -> $FICHIER_APRES)" $([[ -n "$FICHIER_APRES" && "$FICHIER_APRES" != "$FICHIER_AVANT" ]] && echo 0 || echo 1)
+verifier "le nouveau fichier de flux existe sur disque ($FICHIER_APRES)" $(fichier_existe_conteneur "$FICHIER_APRES" && echo 0 || echo 1)
+verifier "l'ancien fichier de flux a été supprimé par la régénération ($FICHIER_AVANT)" $(fichier_existe_conteneur "$FICHIER_AVANT" && echo 1 || echo 0)
+
 echo "---"
 if [[ "$ECHECS" -eq 0 ]]; then
   echo "TOUS LES TESTS PASSENT"

@@ -210,6 +210,34 @@ class ImagesLegeres_File {
 		return $compte;
 	}
 
+	/**
+	 * Remet à `a-faire` les lignes dont la pièce jointe est une image de produit WooCommerce
+	 * (ADR 0006 point 7, mission 19b) : appelé quand un réglage de flux change, pour que ces
+	 * images repassent par la file et régénèrent leur fichier de flux. Rend le nombre de
+	 * lignes remises.
+	 */
+	public static function remettre_images_produit_a_faire() {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return 0;
+		}
+
+		$table = self::nom();
+
+		return (int) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} f
+				INNER JOIN {$wpdb->posts} image ON image.ID = f.attachment_id
+				INNER JOIN {$wpdb->posts} produit ON produit.ID = image.post_parent AND produit.post_type = 'product'
+				SET f.etat = 'a-faire', f.motif = %s, f.maj = %s
+				WHERE f.etat != 'en-cours'", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				'réglages de flux modifiés',
+				current_time( 'mysql', true )
+			)
+		);
+	}
+
 	public static function reste_a_faire() {
 		global $wpdb;
 
