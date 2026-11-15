@@ -1,10 +1,9 @@
 <?php
 /**
  * Sous-commande `wp images-legeres flux` : interface usine, lecture seule, pour les images
- * de flux Google et Meta (spec § 10, ADR 0006 point 3). Ne dépend pas de la génération
- * effective des fichiers de flux (mission 18) : calcule le côté du carré **disponible**
- * pour chaque image produit à partir du même rectangle de recadrage (ou du même repli
- * « fond ajouté ») que l'affichage, pour signaler en amont les images sous le plancher.
+ * de flux Google et Meta (spec § 10, ADR 0006 point 3). S'appuie sur
+ * `ImagesLegeres_Flux::cote_reel()` (mission 18) — le même calcul que la génération
+ * effective du fichier de flux, pour ne jamais diverger de ce qui sera réellement produit.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -12,8 +11,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class ImagesLegeres_Cli_Flux {
-
-	const PLANCHER_PX = 500;
 
 	/**
 	 * Liste les images produit dont le carré de flux ferait moins de 500 px de côté :
@@ -41,10 +38,16 @@ class ImagesLegeres_Cli_Flux {
 		$resultats = array();
 
 		foreach ( $ids as $id ) {
-			$id        = (int) $id;
-			$dimension = $this->cote_disponible( $id );
+			$id       = (int) $id;
+			$metadata = wp_get_attachment_metadata( $id );
 
-			if ( null === $dimension || $dimension >= self::PLANCHER_PX ) {
+			if ( empty( $metadata['width'] ) || empty( $metadata['height'] ) ) {
+				continue;
+			}
+
+			$cote = ImagesLegeres_Flux::cote_reel( $id, (int) $metadata['width'], (int) $metadata['height'] );
+
+			if ( $cote >= ImagesLegeres_Flux::PLANCHER_PX ) {
 				continue;
 			}
 
@@ -53,33 +56,11 @@ class ImagesLegeres_Cli_Flux {
 			$resultats[] = array(
 				'id'                => $id,
 				'produit'           => array( 'id' => $parent, 'titre' => get_the_title( $parent ) ),
-				'dimension_obtenue' => $dimension,
-				'motif'             => sprintf( 'carré disponible de %d px, sous le plancher de %d px', $dimension, self::PLANCHER_PX ),
+				'dimension_obtenue' => $cote,
+				'motif'             => sprintf( 'carré atteignable de %d px, sous le plancher de %d px', $cote, ImagesLegeres_Flux::PLANCHER_PX ),
 			);
 		}
 
 		WP_CLI::print_value( $resultats, $assoc_args );
-	}
-
-	/**
-	 * Côté, en pixels, du carré disponible pour l'image de flux de cette pièce jointe :
-	 * celui du rectangle de recadrage posé, ou le plus grand côté de l'original (repli
-	 * « fond ajouté ») en son absence — même règle que l'affichage (ADR 0005 point 4,
-	 * ADR 0006 point 2).
-	 */
-	private function cote_disponible( $id ) {
-		$metadata = wp_get_attachment_metadata( $id );
-
-		if ( empty( $metadata['width'] ) || empty( $metadata['height'] ) ) {
-			return null;
-		}
-
-		$rectangle = ImagesLegeres_Recadrage::obtenir( $id );
-
-		if ( null !== $rectangle ) {
-			return (int) round( $rectangle['w'] * (int) $metadata['width'] );
-		}
-
-		return max( (int) $metadata['width'], (int) $metadata['height'] );
 	}
 }
