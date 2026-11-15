@@ -1,0 +1,32 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Images légères 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/RiusmaX/images-legeres/issues\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Domain: images-legeres\n"
+
+msgid "Images légères"
+msgstr ""
+
+msgid "État"
+msgstr ""
+
+msgid "Réglages"
+msgstr ""
+
+msgid "Lots"
+msgstr ""
+
+msgid "Journal"
+msgstr ""
+
+msgid "Fichiers suivis"
+msgstr ""
+
+msgid "Convertis"
+msgstr ""
+
+msgid "Octets économisés"
+msgstr ""

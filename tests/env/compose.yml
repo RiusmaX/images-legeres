@@ -1,0 +1,54 @@
+name: images-legeres-test
+
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: images_legeres_test
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: wordpress
+    volumes:
+      - db-data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:33061:3306"
+
+  wordpress:
+    image: wordpress:php8.4-apache
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DEBUG: 1
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_DEBUG_LOG', true);
+        define('WP_DEBUG_DISPLAY', false);
+    volumes:
+      - wordpress-data:/var/www/html
+      - ../../:/var/www/html/wp-content/plugins/images-legeres
+    ports:
+      - "127.0.0.1:8081:80"
+
+  cli:
+    image: wordpress:cli-php8.4
+    depends_on:
+      - db
+      - wordpress
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+    volumes:
+      - wordpress-data:/var/www/html
+      - ../../:/var/www/html/wp-content/plugins/images-legeres
+    user: "33:33"
+
+volumes:
+  db-data:
+  wordpress-data:
