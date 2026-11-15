@@ -40,6 +40,11 @@ class ImagesLegeres_Desinstallation {
 		// SEC-4 : restaurer_fichier() ne retire que le frère de l'original retaillé, un par
 		// pièce jointe. Les frères de toutes les sous-tailles restaient sur le disque, servis
 		// en 200, et `wp images-legeres orphelins` rendait « propre » quand même.
+		// F5 : les sous-tailles harmonisées sont des fichiers de l'extension au même titre
+		// que les frères .webp. En premier, pour que leurs propres frères .webp soient
+		// retirés avec elles.
+		ImagesLegeres_Harmonisation::tout_supprimer();
+
 		self::supprimer_freres_webp();
 
 		self::supprimer_dossier_images_legeres();
@@ -168,6 +173,7 @@ class ImagesLegeres_Desinstallation {
 
 		ImagesLegeres_Table::supprimer();
 		ImagesLegeres_File::supprimer();
+		ImagesLegeres_Harmonisees::supprimer();
 
 		foreach ( self::OPTIONS as $option ) {
 			delete_option( $option );

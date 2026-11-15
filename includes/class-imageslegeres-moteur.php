@@ -18,6 +18,32 @@ class ImagesLegeres_Moteur {
 	const FORMATS_TOUJOURS_EXCLUS = array( 'svg' );
 
 	/**
+	 * Motif porté par le seul cas où une sous-taille reste servie en JPEG/PNG depuis que le
+	 * seuil de gain vaut 0 % : le WebP pèserait plus lourd que l'original. Compté à part par
+	 * `wp images-legeres status`.
+	 */
+	const MOTIF_WEBP_PLUS_LOURD = 'webp plus lourd que l\'original';
+
+	/**
+	 * Remet en file une pièce jointe dont les sous-tailles viennent de changer (F5).
+	 *
+	 * Cause mesurée le 2026-11-15 sur l'instance de test : les sous-tailles créées APRÈS le
+	 * passage du lot n'étaient jamais reconverties — personne ne redemandait la pièce jointe.
+	 * Une régénération (`wp media regenerate`, une taille déclarée ajoutée par le thème, un
+	 * changement de réglage WooCommerce) laissait donc des fichiers servis sans frère .webp.
+	 *
+	 * @param array $metadata      Métadonnées enregistrées (rendues telles quelles).
+	 * @param int   $attachment_id Pièce jointe concernée.
+	 */
+	public static function remettre_en_file( $metadata, $attachment_id ) {
+		if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) ) {
+			ImagesLegeres_File::remettre_a_faire( (int) $attachment_id, 'sous-tailles régénérées' );
+		}
+
+		return $metadata;
+	}
+
+	/**
 	 * Traite une pièce jointe : retaille éventuelle de l'original, puis conversion de
 	 * l'original et de chacune de ses sous-tailles. Rend un tableau de résultats, un par
 	 * fichier physique concerné.
@@ -147,7 +173,9 @@ class ImagesLegeres_Moteur {
 
 			return array(
 				'etat'            => 'ignore',
-				'motif'           => sprintf( 'gain %.1f %% sous le seuil de %d %%', $gain_pourcent, $gain_minimal ),
+				'motif'           => $gain_pourcent < 0 && $gain_minimal <= 0
+					? sprintf( '%s (%.1f %%)', self::MOTIF_WEBP_PLUS_LOURD, -$gain_pourcent )
+					: sprintf( 'gain %.1f %% sous le seuil de %d %%', $gain_pourcent, $gain_minimal ),
 				'taille_origine'  => $taille_origine,
 				'largeur_origine' => $largeur,
 				'hauteur_origine' => $hauteur,

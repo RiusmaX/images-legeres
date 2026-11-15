@@ -51,6 +51,14 @@ class ImagesLegeres_Cli {
 			);
 		}
 
+		// Depuis que le seuil de gain vaut 0 % (décision du 2026-11-15), le seul fichier
+		// qui reste servi en JPEG/PNG est celui dont le WebP pèserait plus lourd : il se
+		// compte, sinon « toute sous-taille a son WebP » n'est pas vérifiable.
+		$donnees[] = array( 'cle' => 'fichiers_webp_plus_lourd', 'valeur' => (string) ImagesLegeres_Table::compter_webp_plus_lourd() );
+		$donnees[] = array( 'cle' => 'gain_minimal_pourcent', 'valeur' => (string) $reglages['gain_minimal_pourcent'] );
+		$donnees[] = array( 'cle' => 'harmonisation_produit_active', 'valeur' => $reglages['harmonisation_produit_active'] ? '1' : '0' );
+		$donnees[] = array( 'cle' => 'sous_tailles_harmonisees', 'valeur' => (string) ImagesLegeres_Harmonisees::compter() );
+
 		\WP_CLI\Utils\format_items( \WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ), $donnees, array( 'cle', 'valeur' ) );
 	}
 
@@ -86,6 +94,10 @@ class ImagesLegeres_Cli {
 			$orphelins[] = array( 'type' => 'table', 'identifiant' => ImagesLegeres_File::nom() );
 		}
 
+		if ( ImagesLegeres_Harmonisees::existe() ) {
+			$orphelins[] = array( 'type' => 'table', 'identifiant' => ImagesLegeres_Harmonisees::nom() );
+		}
+
 		foreach ( ImagesLegeres_Desinstallation::OPTIONS as $option ) {
 			if ( false !== get_option( $option, false ) ) {
 				$orphelins[] = array( 'type' => 'option', 'identifiant' => $option );
@@ -118,6 +130,17 @@ class ImagesLegeres_Cli {
 			$orphelins[] = array(
 				'type'        => 'fichier',
 				'identifiant' => sprintf( 'frères .webp dans uploads (%d) — ex. %s', count( $freres ), ImagesLegeres_Moteur::chemin_relatif( $freres[0] ) ),
+			);
+		}
+
+		// F5 : les sous-tailles harmonisées sont des fichiers de l'extension, à côté des
+		// natifs. Un contrôle qui ne les voit pas laisserait « Tout rendre » passer pour
+		// propre alors que les carrés restent en ligne.
+		$harmonisees = ImagesLegeres_Harmonisation::fichiers_existants();
+		if ( ! empty( $harmonisees ) ) {
+			$orphelins[] = array(
+				'type'        => 'fichier',
+				'identifiant' => sprintf( 'sous-tailles harmonisées (%d) — ex. %s', count( $harmonisees ), ImagesLegeres_Moteur::chemin_relatif( $harmonisees[0] ) ),
 			);
 		}
 
@@ -160,6 +183,70 @@ class ImagesLegeres_Cli {
 		$resultats = ImagesLegeres_Moteur::traiter_attachment( $id, $dry_run );
 
 		\WP_CLI\Utils\format_items( 'table', $resultats, array( 'chemin', 'etat', 'motif' ) );
+
+		if ( $dry_run ) {
+			WP_CLI::log( 'dry-run : aucune écriture.' );
+		}
+	}
+
+	/**
+	 * Produit les sous-tailles harmonisées des images produit cadrées, et leurs frères .webp.
+	 *
+	 * Les fichiers sont écrits à côté des natifs, sous un nom propre à l'extension
+	 * (`<base>-il-harmonise-<L>x<H>.<ext>`) : aucun fichier natif n'est touché, aucune entrée
+	 * de `_wp_attachment_metadata` n'est modifiée. Ils ne sont servis que par la réécriture à
+	 * la sortie, donc réservés aux administrateurs connectés tant que le mode aperçu est actif.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [<ids>...]
+	 * : Identifiants de pièces jointes. Sans argument : toutes les images produit cadrées
+	 * (rectangle posé ou fond assumé).
+	 *
+	 * [--dry-run]
+	 * : N'écrit rien, liste ce qui serait produit.
+	 *
+	 * [--format=<format>]
+	 * : table, json ou yaml.
+	 * ---
+	 * default: table
+	 * options:
+	 *   - table
+	 *   - json
+	 *   - yaml
+	 * ---
+	 *
+	 * @when after_wp_load
+	 */
+	public function harmoniser( $args, $assoc_args ) {
+		if ( ! ImagesLegeres_Reglages::valeur( 'harmonisation_produit_active' ) ) {
+			WP_CLI::error( 'harmonisation produit désactivée : rien à produire.' );
+		}
+
+		$dry_run = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'dry-run', false );
+		$ids     = $args ? array_map( 'intval', $args ) : ImagesLegeres_Harmonisation::ids_a_harmoniser();
+
+		if ( empty( $ids ) ) {
+			WP_CLI::warning( 'aucune image produit cadrée : rien à produire.' );
+
+			return;
+		}
+
+		$lignes = array();
+
+		foreach ( $ids as $id ) {
+			foreach ( ImagesLegeres_Harmonisation::generer( $id, $dry_run ) as $resultat ) {
+				$lignes[] = array(
+					'id'      => (string) $id,
+					'taille'  => $resultat['taille'],
+					'fichier' => $resultat['fichier'],
+					'etat'    => $resultat['etat'],
+					'motif'   => $resultat['motif'],
+				);
+			}
+		}
+
+		\WP_CLI\Utils\format_items( \WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ), $lignes, array( 'id', 'taille', 'fichier', 'etat', 'motif' ) );
 
 		if ( $dry_run ) {
 			WP_CLI::log( 'dry-run : aucune écriture.' );

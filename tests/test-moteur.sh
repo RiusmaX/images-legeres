@@ -237,17 +237,51 @@ else
   verifier "canal alpha conservé sur une image produit" 1
 fi
 
-echo "--- garde-fou de gain 10 % ---"
+echo "--- garde-fou de gain : seuil réglable, et seuil 0 % par défaut ---"
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("gain_minimal_pourcent" => 99));' >/dev/null
 ID_GAIN=$(importer jpeg-471.jpg)
 CHEMIN_GAIN=$(wp eval "echo get_attached_file($ID_GAIN);" | tr -d '\r')
 RESULTAT_GAIN=$(wp images-legeres convert "$ID_GAIN" 2>&1)
-wp eval 'ImagesLegeres_Reglages::enregistrer(array("gain_minimal_pourcent" => 10));' >/dev/null
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("gain_minimal_pourcent" => 0));' >/dev/null
 if echo "$RESULTAT_GAIN" | grep -qi "ignore" && ! existe_dans_conteneur "${CHEMIN_GAIN}.webp"; then
   verifier "sous le seuil de gain, le frère n'est pas gardé" 0
 else
   verifier "sous le seuil de gain, le frère n'est pas gardé" 1
 fi
+
+# Décision de Marius du 2026-11-15 : tout doit être en WebP. Le seuil vaut 0 % par défaut,
+# et le seul abandon qui subsiste est le WebP plus lourd que l'original — compté à part.
+SEUIL_DEFAUT=$(wp eval 'echo ImagesLegeres_Reglages::defauts()["gain_minimal_pourcent"];' | tr -d '\r')
+verifier "seuil de gain à 0 % par défaut (obtenu $SEUIL_DEFAUT)" $([[ "$SEUIL_DEFAUT" == "0" ]] && echo 0 || echo 1)
+
+# Un WebP plus lourd que sa source : un JPEG minuscule et déjà très compressé. On vérifie
+# le motif distinct ET que le JPEG reste servi (aucun frère écrit).
+ID_LOURD=$(wp eval "
+\$i = new Imagick();
+\$i->newPseudoImage( 64, 64, 'plasma:fractal' );
+\$i->addNoiseImage( Imagick::NOISE_GAUSSIAN );
+\$i->setImageFormat( 'jpeg' );
+\$i->setImageCompressionQuality( 20 );
+\$u = wp_upload_dir();
+\$d = trailingslashit( \$u['path'] ) . 'webp-plus-lourd.jpg';
+\$i->writeImage( \$d );
+\$id = wp_insert_attachment( array( 'post_mime_type' => 'image/jpeg', 'post_title' => 'lourd', 'post_status' => 'inherit' ), \$d );
+require_once ABSPATH . 'wp-admin/includes/image.php';
+wp_update_attachment_metadata( \$id, wp_generate_attachment_metadata( \$id, \$d ) );
+echo \$id;" | tr -d '\r')
+CHEMIN_LOURD=$(wp eval "echo get_attached_file($ID_LOURD);" | tr -d '\r')
+MOTIF_LOURD=$(wp eval "
+\$r = ImagesLegeres_Moteur::convertir_vers_webp( '$CHEMIN_LOURD', 90 );
+echo \$r['etat'] . '|' . \$r['motif'];" | tr -d '\r')
+if [[ "$MOTIF_LOURD" == ignore\|webp\ plus\ lourd* ]] && ! existe_dans_conteneur "${CHEMIN_LOURD}.webp"; then
+  verifier "WebP plus lourd que l'original : motif distinct, JPEG toujours servi ($MOTIF_LOURD)" 0
+else
+  verifier "WebP plus lourd que l'original : motif distinct, JPEG toujours servi ($MOTIF_LOURD)" 1
+fi
+COMPTE_LOURD=$(wp eval "
+ImagesLegeres_Table::enregistrer( array( 'chemin' => ImagesLegeres_Moteur::chemin_relatif( '$CHEMIN_LOURD' ), 'etat' => 'ignore', 'motif' => ImagesLegeres_Moteur::MOTIF_WEBP_PLUS_LOURD ) );
+echo ImagesLegeres_Table::compter_webp_plus_lourd();" | tr -d '\r')
+verifier "status compte les WebP plus lourds que l'original (obtenu $COMPTE_LOURD)" $([[ "${COMPTE_LOURD:-0}" -ge 1 ]] && echo 0 || echo 1)
 
 echo "--- idempotence : relancer ne refait rien ---"
 MTIME_AVANT=$(mtime_dans_conteneur "${CHEMIN_471}.webp")
@@ -363,6 +397,7 @@ fi
 echo "--- qualite : SSIM calculé en PHP quand la métrique d'Imagick est écartée ---"
 # Reproduit l'hébergement Infomaniak (ImageMagick 6.9.11, sans métrique SSIM), où la
 # commande mourait sans message. Ici la métrique existe : on l'écarte volontairement.
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("ssim_imagick_actif" => true));' >/dev/null
 MESURE_SSIM=$(wp eval "
 \$a = ImagesLegeres_Qualite::mesurer_attachment($ID_QUALITE_PRODUIT);
 define( 'IMAGES_LEGERES_FORCER_SSIM_PHP', true );
@@ -372,7 +407,15 @@ if ( is_wp_error( \$a ) || is_wp_error( \$b ) ) {
 } else {
   printf( '%s %s %.5f %.5f', \$a['methode_ssim'], \$b['methode_ssim'], \$a['ssim'], \$b['ssim'] );
 }" | tr -d '\r')
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("ssim_imagick_actif" => false));' >/dev/null
 read -r METHODE_IMAGICK METHODE_PHP SSIM_IMAGICK SSIM_PHP <<<"$MESURE_SSIM"
+
+# Voie unique (décision de l'orchestrateur, 2026-11-15) : sans réglage explicite, la mesure
+# passe par le calcul PHP sur la luminance, sur tous les hébergements.
+VOIE_DEFAUT=$(wp eval "
+\$m = ImagesLegeres_Qualite::mesurer_attachment($ID_QUALITE_PRODUIT);
+echo is_wp_error( \$m ) ? 'ERREUR' : \$m['methode_ssim'];" | tr -d '\r')
+verifier "par défaut, le SSIM est calculé en PHP sur la luminance (obtenu $VOIE_DEFAUT)" $([[ "$VOIE_DEFAUT" == "php" ]] && echo 0 || echo 1)
 
 verifier "mesure de qualité rendue sans erreur dans les deux voies" $([[ -n "${SSIM_PHP:-}" ]] && echo 0 || echo 1)
 verifier "métrique Imagick écartée : la mesure passe par le calcul PHP" $([[ "${METHODE_PHP:-}" == "php" ]] && echo 0 || echo 1)

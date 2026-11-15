@@ -30,8 +30,16 @@ class ImagesLegeres_Plugin {
 		add_action( 'upgrader_process_complete', array( __CLASS__, 'apres_mise_a_jour' ), 10, 2 );
 		self::verifier_version();
 
-		add_filter( 'wp_image_editors', array( 'ImagesLegeres_Editor', 'enregistrer' ) );
-		add_filter( 'woocommerce_get_image_size_single', array( 'ImagesLegeres_Recadrage', 'filtrer_taille_single' ) );
+		// F5 : ni éditeur branché sur `wp_image_editors`, ni modification d'une taille
+		// déclarée (`woocommerce_get_image_size_single`). Les deux faisaient écrire une
+		// sous-taille harmonisée sous le nom de fichier natif, servie à TOUS les visiteurs
+		// dès la régénération suivante — hors du mode aperçu, qui ne protégeait plus rien.
+		// L'harmonisation vit désormais dans des fichiers à part
+		// (`ImagesLegeres_Harmonisation`), substitués à l'affichage par
+		// `ImagesLegeres_Service`, sous la même garde que le WebP.
+		// Une pièce jointe dont les sous-tailles changent repasse par la file : sans cela,
+		// les fichiers créés après le lot restent servis sans frère .webp (F5).
+		add_filter( 'wp_update_attachment_metadata', array( 'ImagesLegeres_Moteur', 'remettre_en_file' ), 10, 2 );
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			WP_CLI::add_command( 'images-legeres', 'ImagesLegeres_Cli' );
@@ -80,6 +88,12 @@ class ImagesLegeres_Plugin {
 		if ( get_option( 'images_legeres_version' ) === IMAGES_LEGERES_VERSION ) {
 			return;
 		}
+
+		// Mise à jour déposée en FTP ou par Git : l'activation n'est pas repassée, c'est ici
+		// que la migration du seuil de gain a lieu. La table d'inventaire des harmonisées,
+		// elle, se crée à la première écriture (sinon elle ressort en orphelin après
+		// « Tout rendre », qui vient de la supprimer).
+		ImagesLegeres_Reglages::migrer();
 
 		self::reposer_protections();
 	}

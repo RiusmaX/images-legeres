@@ -79,6 +79,27 @@ class ImagesLegeres_Table {
 		return $compte;
 	}
 
+	/**
+	 * Sous-tailles laissées en JPEG/PNG parce que leur WebP pèserait plus lourd (F5). Le
+	 * seul motif d'abandon qui subsiste avec un seuil de gain à 0 %.
+	 */
+	public static function compter_webp_plus_lourd() {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return 0;
+		}
+
+		$table = self::nom();
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$table} WHERE etat = 'ignore' AND motif LIKE %s", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				$wpdb->esc_like( ImagesLegeres_Moteur::MOTIF_WEBP_PLUS_LOURD ) . '%'
+			)
+		);
+	}
+
 	public static function gain_total_octets() {
 		global $wpdb;
 

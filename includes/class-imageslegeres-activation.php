@@ -17,6 +17,8 @@ class ImagesLegeres_Activation {
 		ImagesLegeres_Protection::poser_toutes();
 		ImagesLegeres_Table::creer();
 		ImagesLegeres_File::creer();
+		ImagesLegeres_Harmonisees::creer();
+		ImagesLegeres_Reglages::migrer();
 		ImagesLegeres_Reglages::initialiser_defauts();
 		update_option( 'images_legeres_version', IMAGES_LEGERES_VERSION );
 
@@ -59,6 +61,8 @@ class ImagesLegeres_Activation {
 	public static function detecter_autre_editeur() {
 		$resultat = apply_filters( 'wp_image_editors', self::EDITEURS_NATIFS );
 
-		return array_values( array_diff( (array) $resultat, self::EDITEURS_NATIFS, array( 'ImagesLegeres_Editor' ) ) );
+		// Depuis F5, l'extension ne branche plus d'éditeur : tout ce qui sort de la liste
+		// native vient d'un autre plugin, sans exception à retrancher.
+		return array_values( array_diff( (array) $resultat, self::EDITEURS_NATIFS ) );
 	}
 }

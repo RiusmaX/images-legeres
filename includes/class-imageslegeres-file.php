@@ -255,6 +255,32 @@ class ImagesLegeres_File {
 		);
 	}
 
+	/**
+	 * Remet une pièce jointe à « a-faire », qu'elle soit déjà dans la file ou non. Ne touche
+	 * jamais une ligne « en-cours » : le lot est en train de la traiter.
+	 */
+	public static function remettre_a_faire( $attachment_id, $motif = '' ) {
+		global $wpdb;
+
+		$attachment_id = (int) $attachment_id;
+
+		if ( ! self::existe() || $attachment_id <= 0 ) {
+			return false;
+		}
+
+		$table = self::nom();
+
+		return (bool) $wpdb->query(
+			$wpdb->prepare(
+				"INSERT INTO {$table} (attachment_id, etat, motif, maj) VALUES (%d, 'a-faire', %s, %s)
+				ON DUPLICATE KEY UPDATE etat = IF( etat = 'en-cours', etat, 'a-faire' ), motif = IF( etat = 'en-cours', motif, VALUES(motif) ), maj = VALUES(maj)", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				$attachment_id,
+				(string) $motif,
+				current_time( 'mysql', true )
+			)
+		);
+	}
+
 	public static function reste_a_faire() {
 		global $wpdb;
 

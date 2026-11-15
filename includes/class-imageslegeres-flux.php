@@ -236,7 +236,7 @@ class ImagesLegeres_Flux {
 		$rectangle = ImagesLegeres_Recadrage::obtenir( $attachment_id );
 
 		if ( $rectangle ) {
-			$boite = ImagesLegeres_Editor::calculer_boite_recadrage( $rectangle, $largeur, $hauteur );
+			$boite = ImagesLegeres_Rendu::calculer_boite_recadrage( $rectangle, $largeur, $hauteur );
 
 			return (int) min( $boite['largeur'], $boite['hauteur'] );
 		}
@@ -309,9 +309,9 @@ class ImagesLegeres_Flux {
 
 		try {
 			if ( $rectangle ) {
-				ImagesLegeres_Editor::appliquer_recadrage( $image, $rectangle, $dimension, $dimension );
+				ImagesLegeres_Rendu::appliquer_recadrage( $image, $rectangle, $dimension, $dimension );
 			} else {
-				ImagesLegeres_Editor::appliquer_fond_ajoute( $image, $dimension, $dimension );
+				ImagesLegeres_Rendu::appliquer_fond_ajoute( $image, $dimension, $dimension );
 			}
 
 			$image->setImageFormat( 'jpeg' );

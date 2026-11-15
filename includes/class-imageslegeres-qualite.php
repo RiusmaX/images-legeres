@@ -132,7 +132,7 @@ class ImagesLegeres_Qualite {
 				$motif_repli = $erreur->getMessage();
 			}
 		} else {
-			$motif_repli = 'métrique SSIM absente de cette version d\'ImageMagick';
+			$motif_repli = 'voie unique : SSIM sur la luminance calculé en PHP';
 		}
 
 		if ( null === $valeur_ssim ) {
@@ -272,14 +272,22 @@ class ImagesLegeres_Qualite {
 	 * l'hébergement mutualisé d'Infomaniak (ImageMagick 6.9.11) elle n'est pas définie, et
 	 * l'évaluer levait une Error fatale : la commande mourait sans rien afficher.
 	 *
-	 * La constante `IMAGES_LEGERES_FORCER_SSIM_PHP` force le calcul PHP même quand la
-	 * métrique existe. Ce n'est pas un interrupteur de contrôle : les deux voies mesurent la
-	 * même chose et sont comparées par la recette — elle sert à étalonner l'une contre
-	 * l'autre sur un même site, et à faire tourner le test du repli là où ImageMagick 7 est
-	 * présent.
+	 * Surtout, elle ne mesure pas la même chose : `compareImages()` moyenne le SSIM sur les
+	 * canaux RVB, là où l'ADR 0007 et `ssim.py` le calculent sur la luminance. Sur la même
+	 * paire, 0,99399 contre 0,99738 (F4, 2026-11-15) — un seuil n'aurait pas le même sens
+	 * d'un hébergement à l'autre. Le calcul PHP sur la luminance est donc la voie unique ;
+	 * la voie Imagick reste accessible, derrière le réglage `ssim_imagick_actif`, désactivé
+	 * par défaut, pour étalonner l'une contre l'autre.
+	 *
+	 * La constante `IMAGES_LEGERES_FORCER_SSIM_PHP` force le calcul PHP quel que soit le
+	 * réglage (test du repli là où ImageMagick 7 est présent).
 	 */
 	public static function metrique_imagick_disponible() {
 		if ( defined( 'IMAGES_LEGERES_FORCER_SSIM_PHP' ) && IMAGES_LEGERES_FORCER_SSIM_PHP ) {
+			return false;
+		}
+
+		if ( ! ImagesLegeres_Reglages::valeur( 'ssim_imagick_actif' ) ) {
 			return false;
 		}
 

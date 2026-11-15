@@ -199,6 +199,7 @@ class ImagesLegeres_Admin {
 		self::ligne_texte( 'plage_horaire_fin', __( 'Fin de plage horaire des lots', 'images-legeres' ), $reglages );
 		self::ligne_nombre( 'pause_entre_images_secondes', __( 'Pause entre deux images (s)', 'images-legeres' ), $reglages );
 		self::ligne_nombre( 'charge_max_serveur', __( 'Charge serveur maximale', 'images-legeres' ), $reglages );
+		self::ligne_case( 'ssim_imagick_actif', __( 'Mesurer le SSIM avec ImageMagick (étalonnage ; voie normale : calcul PHP sur la luminance)', 'images-legeres' ), $reglages );
 		self::ligne_case( 'mode_apercu_actif', __( 'Mode aperçu (réécriture réservée aux administrateurs connectés)', 'images-legeres' ), $reglages );
 
 		echo '</tbody></table>';

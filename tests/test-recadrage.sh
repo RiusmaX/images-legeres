@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Test de l'harmonisation produit par recadrage (mission 15) : méta `_images_legeres_crop`,
-# éditeur de sous-tailles dérivé d'Imagick, repli « fond ajouté », filtre
-# `woocommerce_get_image_size_single`, survie du rectangle à une retaille.
+# Test de l'harmonisation produit par recadrage (mission 15, revue F5) : méta
+# `_images_legeres_crop`, primitives de rendu, repli « fond ajouté », survie du rectangle à
+# une retaille.
+#
+# Depuis F5, l'harmonisation n'écrit plus sous le nom de fichier natif : elle produit des
+# fichiers `<base>-il-harmonise-<L>x<H>.<ext>` à côté, par `wp images-legeres harmoniser`.
+# Les sous-tailles natives restent celles de WordPress et de WooCommerce — c'est ce que ces
+# cas vérifient aussi.
 #
 # Le conteneur `cli` (image `wordpress:cli-php8.4`) n'a aucun délégué Imagick utilisable —
 # `Imagick::queryFormats()` y rend un tableau vide pour JPEG comme pour PNG (confirmé le
@@ -90,16 +95,14 @@ chemin_attachment() {
   wp eval "echo get_attached_file( $1 );" | tr -d '\r'
 }
 
-couleur_moyenne_sous_taille() {
-  # Rend "r,g,b" moyen d'une sous-taille déclarée, échantillonné sur une grille 5x5 centrée
-  # entre 35 % et 65 % de chaque côté (marge de sécurité : les rectangles de test couvrent
-  # au moins 60 % du côté correspondant, donc ce carré central reste toujours à l'intérieur,
-  # même après l'anticrénelage du dessin et le filtre Lanczos du redimensionnement).
+couleur_moyenne_harmonisee() {
+  # Même échantillonnage, sur la sous-taille HARMONISÉE produite par l'extension.
   local id="$1" taille="$2"
   wp eval "
-\$meta = wp_get_attachment_metadata( $id );
-if ( empty( \$meta['sizes']['$taille']['file'] ) ) { echo 'absent'; exit; }
-\$chemin = trailingslashit( dirname( get_attached_file( $id ) ) ) . \$meta['sizes']['$taille']['file'];
+\$lignes = ImagesLegeres_Harmonisees::par_attachment( $id );
+\$chemin = '';
+foreach ( \$lignes as \$l ) { if ( \$l['taille'] === '$taille' ) { \$u = wp_upload_dir(); \$chemin = trailingslashit( \$u['basedir'] ) . \$l['chemin_harmonise']; } }
+if ( '' === \$chemin || ! file_exists( \$chemin ) ) { echo 'absent'; exit; }
 \$img = new Imagick( \$chemin );
 \$l = \$img->getImageWidth();
 \$h = \$img->getImageHeight();
@@ -142,7 +145,7 @@ CAS_RATIOS=(
 for cas in "${CAS_RATIOS[@]}"; do
   read -r L H XR YR WR HR XPX YPX COTE <<<"$cas"
   SORTIE=$(wp eval "
-\$b = ImagesLegeres_Editor::calculer_boite_recadrage( array( 'x' => $XR, 'y' => $YR, 'w' => $WR, 'h' => $HR ), $L, $H );
+\$b = ImagesLegeres_Rendu::calculer_boite_recadrage( array( 'x' => $XR, 'y' => $YR, 'w' => $WR, 'h' => $HR ), $L, $H );
 echo \$b['x'] . ',' . \$b['y'] . ',' . \$b['largeur'] . ',' . \$b['hauteur'];
 " | tr -d '\r')
   IFS=',' read -r BX BY BL BH <<<"$SORTIE"
@@ -170,16 +173,40 @@ verifier "rectangle posé (200,200,600,600 sur 1000x1000)" $([[ "$RESULTAT_DEF" 
 
 wp media regenerate "$ID1" --yes >/dev/null 2>&1
 
-RGB_THUMB=$(couleur_moyenne_sous_taille "$ID1" woocommerce_thumbnail)
+# Empreintes des natifs AVANT harmonisation : l'extension ne doit en toucher aucun.
+EMPREINTES_AVANT=$(wp eval "
+\$m = wp_get_attachment_metadata( $ID1 );
+\$d = trailingslashit( dirname( get_attached_file( $ID1 ) ) );
+\$s = array();
+foreach ( \$m['sizes'] as \$nom => \$t ) { \$s[] = \$nom . ':' . md5_file( \$d . \$t['file'] ); }
+sort( \$s ); echo implode( ' ', \$s );" | tr -d '\r')
+
+wp images-legeres harmoniser "$ID1" >/dev/null 2>&1
+
+EMPREINTES_APRES=$(wp eval "
+\$m = wp_get_attachment_metadata( $ID1 );
+\$d = trailingslashit( dirname( get_attached_file( $ID1 ) ) );
+\$s = array();
+foreach ( \$m['sizes'] as \$nom => \$t ) { \$s[] = \$nom . ':' . md5_file( \$d . \$t['file'] ); }
+sort( \$s ); echo implode( ' ', \$s );" | tr -d '\r')
+verifier "harmonisation : aucun fichier natif modifié (empreintes identiques)" $([[ -n "$EMPREINTES_AVANT" && "$EMPREINTES_AVANT" == "$EMPREINTES_APRES" ]] && echo 0 || echo 1)
+
+RGB_THUMB=$(couleur_moyenne_harmonisee "$ID1" woocommerce_thumbnail)
 est_rouge "$RGB_THUMB"
-verifier "woocommerce_thumbnail (300x300) conforme au rectangle : uniformément rouge ($RGB_THUMB)" $?
+verifier "harmonisée woocommerce_thumbnail (300x300) conforme au rectangle : uniformément rouge ($RGB_THUMB)" $?
 
-RGB_SINGLE=$(couleur_moyenne_sous_taille "$ID1" woocommerce_single)
+RGB_SINGLE=$(couleur_moyenne_harmonisee "$ID1" woocommerce_single)
 est_rouge "$RGB_SINGLE"
-verifier "woocommerce_single (1024x1024) conforme au rectangle : uniformément rouge ($RGB_SINGLE)" $?
+verifier "harmonisée woocommerce_single conforme au rectangle : uniformément rouge ($RGB_SINGLE)" $?
 
-LARGEUR_SINGLE=$(wp eval "\$m = wp_get_attachment_metadata($ID1); echo \$m['sizes']['woocommerce_single']['width'] . 'x' . \$m['sizes']['woocommerce_single']['height'];" | tr -d '\r')
-verifier "woocommerce_single régénéré en 1024x1024 (obtenu $LARGEUR_SINGLE)" $([[ "$LARGEUR_SINGLE" == "1024x1024" ]] && echo 0 || echo 1)
+DIM_SINGLE=$(wp eval "
+foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID1 ) as \$l ) { if ( 'woocommerce_single' === \$l['taille'] ) { echo \$l['largeur'] . 'x' . \$l['hauteur']; } }" | tr -d '\r')
+LARGEUR_SINGLE="${DIM_SINGLE%%x*}"
+HAUTEUR_SINGLE="${DIM_SINGLE##*x}"
+verifier "harmonisée de la fiche produit carrée (obtenu $DIM_SINGLE)" $([[ -n "$DIM_SINGLE" && "$LARGEUR_SINGLE" == "$HAUTEUR_SINGLE" ]] && echo 0 || echo 1)
+
+NATIF_SINGLE=$(wp eval "\$m = wp_get_attachment_metadata($ID1); echo \$m['sizes']['woocommerce_single']['width'] . 'x' . \$m['sizes']['woocommerce_single']['height'];" | tr -d '\r')
+verifier "woocommerce_single natif laissé tel que WooCommerce le déclare (obtenu $NATIF_SINGLE)" $([[ "$NATIF_SINGLE" != "" ]] && echo 0 || echo 1)
 
 echo "--- sans rectangle : fond ajouté, jamais de recadrage ---"
 IMG2=/tmp/marqueurs-2-${RUN_ID}.jpg
@@ -204,6 +231,7 @@ AVANT=$(wp eval "echo ImagesLegeres_Recadrage::obtenir( $ID2 ) === null ? 'null'
 verifier "aucun rectangle posé au départ" $([[ "$AVANT" == "null" ]] && echo 0 || echo 1)
 
 wp media regenerate "$ID2" --yes >/dev/null 2>&1
+wp images-legeres harmoniser "$ID2" >/dev/null 2>&1
 
 # Avec un fond ajouté, la photo entière (ratio 3:4) tient à l'échelle dans le carré : sa
 # largeur à l'échelle vaut 300 px sur une sous-taille de 300x300, sa hauteur 300 px — donc
@@ -214,8 +242,8 @@ wp media regenerate "$ID2" --yes >/dev/null 2>&1
 # et du bas de la photo doivent rester visibles (pas de recadrage) : on les retrouve à ~0-25px
 # et ~275-300px de hauteur, sur la colonne centrale.
 VERIF_FOND=$(wp eval "
-\$meta = wp_get_attachment_metadata( $ID2 );
-\$chemin = trailingslashit( dirname( get_attached_file( $ID2 ) ) ) . \$meta['sizes']['woocommerce_thumbnail']['file'];
+\$chemin = '';
+foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID2 ) as \$l ) { if ( 'woocommerce_thumbnail' === \$l['taille'] ) { \$u = wp_upload_dir(); \$chemin = trailingslashit( \$u['basedir'] ) . \$l['chemin_harmonise']; } }
 \$img = new Imagick( \$chemin );
 \$l = \$img->getImageWidth();
 \$h = \$img->getImageHeight();
@@ -304,20 +332,21 @@ wp eval "ImagesLegeres_Recadrage::effacer( $ID1 );" >/dev/null
 EFFACE=$(wp eval "echo ImagesLegeres_Recadrage::obtenir( $ID1 ) === null ? 'null' : 'pose';" | tr -d '\r')
 verifier "effacer() retire bien le rectangle" $([[ "$EFFACE" == "null" ]] && echo 0 || echo 1)
 
-echo "--- filtre woocommerce_get_image_size_single ---"
+echo "--- aucune taille déclarée n'est modifiée, harmonisation active ou non (F5) ---"
+# Le filtre `woocommerce_get_image_size_single` est retiré : une taille déclarée modifiée
+# fait fabriquer à WooCommerce une sous-taille NATIVE carrée, servie à tous les visiteurs
+# sans passer par la réécriture d'adresse — le mode aperçu ne protégeait plus rien.
 AVEC_HARMONISATION=$(wp eval "
 \$t = apply_filters( 'woocommerce_get_image_size_single', array( 'width' => 1024, 'height' => 0, 'crop' => 0 ) );
 echo \$t['width'] . 'x' . \$t['height'] . ':' . ( \$t['crop'] ? '1' : '0' );
 " | tr -d '\r')
-verifier "harmonisation active : woocommerce_single filtré en 1024x1024, recadré (obtenu $AVEC_HARMONISATION)" $([[ "$AVEC_HARMONISATION" == "1024x1024:1" ]] && echo 0 || echo 1)
+verifier "harmonisation active : woocommerce_single NON filtré (obtenu $AVEC_HARMONISATION)" $([[ "$AVEC_HARMONISATION" == "1024x0:0" ]] && echo 0 || echo 1)
 
-wp eval 'ImagesLegeres_Reglages::enregistrer(array("harmonisation_produit_active" => false));' >/dev/null
-SANS_HARMONISATION=$(wp eval "
-\$t = apply_filters( 'woocommerce_get_image_size_single', array( 'width' => 1024, 'height' => 0, 'crop' => 0 ) );
-echo \$t['width'] . 'x' . \$t['height'] . ':' . ( \$t['crop'] ? '1' : '0' );
+AUCUN_EDITEUR=$(wp eval "
+\$e = apply_filters( 'wp_image_editors', array( 'WP_Image_Editor_Imagick', 'WP_Image_Editor_GD' ) );
+echo implode( ',', \$e );
 " | tr -d '\r')
-verifier "harmonisation désactivée : woocommerce_single inchangé (obtenu $SANS_HARMONISATION)" $([[ "$SANS_HARMONISATION" == "1024x0:0" ]] && echo 0 || echo 1)
-wp eval 'ImagesLegeres_Reglages::enregistrer(array("harmonisation_produit_active" => true));' >/dev/null
+verifier "aucun éditeur d'image branché par l'extension (obtenu $AUCUN_EDITEUR)" $([[ "$AUCUN_EDITEUR" != *"ImagesLegeres"* ]] && echo 0 || echo 1)
 
 echo "--- un rectangle survit à la retaille de l'original (2560 -> 1920 px) ---"
 IMG3=/tmp/marqueurs-3-${RUN_ID}.jpg
@@ -327,7 +356,8 @@ verifier "import image 2560 px" $([[ "$ID3" =~ ^[0-9]+$ ]] && echo 0 || echo 1)
 
 wp eval "ImagesLegeres_Recadrage::definir( $ID3, 512, 512, 1536, 1536 );" >/dev/null
 wp media regenerate "$ID3" --yes >/dev/null 2>&1
-RGB_AVANT_RETAILLE=$(couleur_moyenne_sous_taille "$ID3" woocommerce_thumbnail)
+wp images-legeres harmoniser "$ID3" >/dev/null 2>&1
+RGB_AVANT_RETAILLE=$(couleur_moyenne_harmonisee "$ID3" woocommerce_thumbnail)
 est_rouge "$RGB_AVANT_RETAILLE"
 verifier "sous-taille conforme avant retaille ($RGB_AVANT_RETAILLE)" $?
 
@@ -347,7 +377,8 @@ echo \$r['x'] . ',' . \$r['y'] . ',' . \$r['w'] . ',' . \$r['h'];
 " | tr -d '\r')
 verifier "le rectangle relatif lui-même n'a pas changé après retaille ($RECTANGLE_INCHANGE)" $([[ "$RECTANGLE_INCHANGE" == "0.2,0.2,0.6,0.6" ]] && echo 0 || echo 1)
 
-RGB_APRES_RETAILLE=$(couleur_moyenne_sous_taille "$ID3" woocommerce_thumbnail)
+wp images-legeres harmoniser "$ID3" >/dev/null 2>&1
+RGB_APRES_RETAILLE=$(couleur_moyenne_harmonisee "$ID3" woocommerce_thumbnail)
 est_rouge "$RGB_APRES_RETAILLE"
 verifier "sous-taille toujours conforme après retaille 2560->1920 : la zone cadrée n'a pas bougé ($RGB_APRES_RETAILLE)" $?
 

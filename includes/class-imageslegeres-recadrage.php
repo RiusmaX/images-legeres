@@ -223,20 +223,4 @@ class ImagesLegeres_Recadrage {
 		return abs( $ratio_image - $ratio_cible ) > self::TOLERANCE_RATIO;
 	}
 
-	/**
-	 * `woocommerce_get_image_size_single` (ADR 0003 point 4, repris par l'ADR 0005 point 6) :
-	 * la fiche produit sert une sous-taille carrée 1024×1024, recadrée, au lieu de 1024×0.
-	 * Filtre, jamais d'écriture dans les options WooCommerce.
-	 */
-	public static function filtrer_taille_single( $taille ) {
-		if ( ! ImagesLegeres_Reglages::valeur( 'harmonisation_produit_active' ) ) {
-			return $taille;
-		}
-
-		return array(
-			'width'  => 1024,
-			'height' => 1024,
-			'crop'   => true,
-		);
-	}
 }

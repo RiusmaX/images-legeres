@@ -58,7 +58,12 @@ class ImagesLegeres_Cycle_Vie {
 			}
 		}
 
-		// 2. Copie de sécurité pleine résolution de l'original retaillé.
+		// 2. Sous-tailles harmonisées (fichiers + frères .webp + lignes d'inventaire).
+		foreach ( ImagesLegeres_Harmonisation::supprimer( $attachment_id ) as $chemin ) {
+			$supprimes[] = $chemin;
+		}
+
+		// 3. Copie de sécurité pleine résolution de l'original retaillé.
 		$chemin_original = get_attached_file( $attachment_id );
 
 		if ( $chemin_original ) {
@@ -69,7 +74,7 @@ class ImagesLegeres_Cycle_Vie {
 			}
 		}
 
-		// 3. Image de flux Google / Meta (fichier + méta).
+		// 4. Image de flux Google / Meta (fichier + méta).
 		$flux = ImagesLegeres_Flux::flux_existant( $attachment_id );
 		ImagesLegeres_Flux::supprimer( $attachment_id );
 
@@ -77,7 +82,7 @@ class ImagesLegeres_Cycle_Vie {
 			$supprimes[] = $flux['chemin'];
 		}
 
-		// 4. Lignes d'état : table des fichiers et file d'attente du lot.
+		// 5. Lignes d'état : table des fichiers et file d'attente du lot.
 		ImagesLegeres_Table::supprimer_par_attachment( $attachment_id );
 		ImagesLegeres_File::supprimer_par_attachment( $attachment_id );
 
