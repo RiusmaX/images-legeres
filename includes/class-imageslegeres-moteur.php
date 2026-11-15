@@ -225,6 +225,7 @@ class ImagesLegeres_Moteur {
 
 		$chemin_sauvegarde = self::chemin_sauvegarde_original( $chemin );
 		wp_mkdir_p( dirname( $chemin_sauvegarde ) );
+		ImagesLegeres_Protection::poser_originaux();
 
 		if ( ! file_exists( $chemin_sauvegarde ) && ! copy( $chemin, $chemin_sauvegarde ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions
 			$image->clear();
@@ -355,7 +356,12 @@ class ImagesLegeres_Moteur {
 		return 'product' === get_post_type( $parent_id );
 	}
 
-	private static function fichiers_de_attachment( $attachment_id ) {
+	/**
+	 * Chemins absolus des fichiers physiques d'une pièce jointe : l'original et chacune de
+	 * ses sous-tailles. Public : ImagesLegeres_Cycle_Vie s'en sert pour retrouver les frères
+	 * .webp à supprimer quand la pièce jointe disparaît (SEC-1).
+	 */
+	public static function fichiers_de_attachment( $attachment_id ) {
 		$chemin = get_attached_file( $attachment_id );
 
 		if ( ! $chemin ) {

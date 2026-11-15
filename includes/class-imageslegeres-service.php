@@ -94,10 +94,24 @@ class ImagesLegeres_Service {
 			return $adresse;
 		}
 
+		// SEC-5 : une adresse contenant « .. » sortirait du dossier uploads. Le réécriveur
+		// ne doit jamais tester l'existence d'un fichier hors de uploads : ce serait un
+		// oracle d'existence sur le reste du disque.
+		if ( false !== strpos( $chemin_relatif, '..' ) ) {
+			return $adresse;
+		}
+
 		$chemin_disque = $basedir . $chemin_relatif;
 		$chemin_webp   = $chemin_disque . '.webp';
 
 		if ( ! file_exists( $chemin_webp ) ) {
+			return $adresse;
+		}
+
+		$reel = realpath( $chemin_webp );
+		$base = realpath( $basedir );
+
+		if ( false === $reel || false === $base || 0 !== strpos( $reel, trailingslashit( $base ) ) ) {
 			return $adresse;
 		}
 

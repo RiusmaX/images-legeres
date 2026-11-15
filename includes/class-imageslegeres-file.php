@@ -62,6 +62,20 @@ class ImagesLegeres_File {
 		return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
 	}
 
+	/**
+	 * Retire la pièce jointe de la file d'attente du lot (SEC-1). Rend le nombre de lignes
+	 * supprimées.
+	 */
+	public static function supprimer_par_attachment( $attachment_id ) {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return 0;
+		}
+
+		return (int) $wpdb->delete( self::nom(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
+	}
+
 	public static function vider() {
 		global $wpdb;
 

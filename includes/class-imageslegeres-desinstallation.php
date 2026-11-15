@@ -36,8 +36,69 @@ class ImagesLegeres_Desinstallation {
 		}
 
 		ImagesLegeres_Lot::annuler_planifications();
+
+		// SEC-4 : restaurer_fichier() ne retire que le frère de l'original retaillé, un par
+		// pièce jointe. Les frères de toutes les sous-tailles restaient sur le disque, servis
+		// en 200, et `wp images-legeres orphelins` rendait « propre » quand même.
+		self::supprimer_freres_webp();
+
 		self::supprimer_dossier_images_legeres();
 		self::desinstaller();
+	}
+
+	/**
+	 * Supprime tous les frères `.webp` du dossier uploads — c'est-à-dire tout fichier
+	 * `<nom>.jpg.webp`, `<nom>.jpeg.webp` ou `<nom>.png.webp`. Le double suffixe est la
+	 * signature de l'extension : un WebP produit par autre chose s'appelle `<nom>.webp`, sans
+	 * l'extension d'origine, et n'est donc jamais touché. Rend la liste des chemins supprimés.
+	 */
+	public static function supprimer_freres_webp() {
+		$supprimes = array();
+
+		foreach ( self::lister_freres_webp() as $chemin ) {
+			wp_delete_file( $chemin );
+
+			if ( ! file_exists( $chemin ) ) {
+				$supprimes[] = $chemin;
+			}
+		}
+
+		return $supprimes;
+	}
+
+	/**
+	 * Liste les frères `.webp` présents dans uploads (chemins absolus). Partagé avec le
+	 * contrôle d'orphelins (`wp images-legeres orphelins`), qui doit compter exactement ce
+	 * que « Tout rendre » supprime — un contrôle qui ne voit pas ce qui reste est pire que
+	 * pas de contrôle (SEC-4).
+	 */
+	public static function lister_freres_webp() {
+		$uploads = wp_get_upload_dir();
+		$base    = untrailingslashit( $uploads['basedir'] );
+
+		if ( ! is_dir( $base ) ) {
+			return array();
+		}
+
+		$freres   = array();
+		$iterateur = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator( $base, FilesystemIterator::SKIP_DOTS ),
+			RecursiveIteratorIterator::LEAVES_ONLY
+		);
+
+		foreach ( $iterateur as $fichier ) {
+			if ( ! $fichier->isFile() ) {
+				continue;
+			}
+
+			if ( preg_match( '#\.(?:jpe?g|png)\.webp$#i', $fichier->getFilename() ) ) {
+				$freres[] = $fichier->getPathname();
+			}
+		}
+
+		sort( $freres );
+
+		return $freres;
 	}
 
 	/**

@@ -111,6 +111,16 @@ class ImagesLegeres_Cli {
 			$orphelins[] = array( 'type' => 'dossier', 'identifiant' => $dossier );
 		}
 
+		// SEC-4 : les frères .webp des sous-tailles survivaient à « Tout rendre » sans que ce
+		// contrôle les voie. Il ne regardait que le dossier images-legeres/.
+		$freres = ImagesLegeres_Desinstallation::lister_freres_webp();
+		if ( ! empty( $freres ) ) {
+			$orphelins[] = array(
+				'type'        => 'fichier',
+				'identifiant' => sprintf( 'frères .webp dans uploads (%d) — ex. %s', count( $freres ), ImagesLegeres_Moteur::chemin_relatif( $freres[0] ) ),
+			);
+		}
+
 		\WP_CLI\Utils\format_items( \WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ), $orphelins, array( 'type', 'identifiant' ) );
 	}
 

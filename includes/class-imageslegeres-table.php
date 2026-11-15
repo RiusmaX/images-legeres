@@ -152,6 +152,20 @@ class ImagesLegeres_Table {
 		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE chemin = %s", $chemin ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 	}
 
+	/**
+	 * Supprime toutes les lignes d'une pièce jointe (SEC-1 : la pièce jointe disparaît, son
+	 * état n'a plus d'objet). Rend le nombre de lignes supprimées.
+	 */
+	public static function supprimer_par_attachment( $attachment_id ) {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return 0;
+		}
+
+		return (int) $wpdb->delete( self::nom(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
+	}
+
 	public static function vider() {
 		global $wpdb;
 

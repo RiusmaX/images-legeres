@@ -25,6 +25,16 @@ class ImagesLegeres_Flux {
 	const PLANCHER_PX   = 500;
 	const META_FLUX     = '_images_legeres_flux';
 
+	/**
+	 * Nom de taille rendu à Facebook for WooCommerce par `armer_drapeau_meta()`. C'est lui
+	 * qui borne le détournement (SEC-3) : `get_all_image_urls()` repasse cette valeur à
+	 * chacun de ses `wp_get_attachment_image_url()` — image principale, image du parent
+	 * d'une variation, images multiples — et à eux seuls. Toute autre résolution d'image de
+	 * la même requête (thème, écran d'administration) demande une taille normale et n'est
+	 * donc pas détournée.
+	 */
+	const TAILLE_META = 'images-legeres-flux';
+
 	/** Drapeau posé/retiré autour de la génération du flux Meta (voir en-tête de fichier). */
 	private static $drapeau_meta = false;
 
@@ -33,7 +43,6 @@ class ImagesLegeres_Flux {
 
 		add_filter( 'facebook_for_woocommerce_fb_product_image_size', array( __CLASS__, 'armer_drapeau_meta' ) );
 		add_action( 'wc_facebook_feed_generation_completed', array( __CLASS__, 'desarmer_drapeau_meta' ) );
-		add_filter( 'wp_get_attachment_image_src', array( __CLASS__, 'filtrer_image_src_meta' ), 10, 4 );
 	}
 
 	/**
@@ -90,15 +99,23 @@ class ImagesLegeres_Flux {
 	 * tout début de la résolution de ses images, `fbproduct.php::get_all_image_urls()`).
 	 */
 	public static function armer_drapeau_meta( $taille ) {
-		if ( self::meta_actif() ) {
-			self::$drapeau_meta = true;
+		if ( ! self::meta_actif() ) {
+			return $taille;
 		}
 
-		return $taille;
+		self::$drapeau_meta = true;
+
+		// Le filtre n'est jamais branché globalement (SEC-3) : il n'existe qu'entre
+		// l'armement et le désarmement, et il est retiré du crochet au désarmement.
+		add_filter( 'wp_get_attachment_image_src', array( __CLASS__, 'filtrer_image_src_meta' ), 10, 4 );
+
+		return self::TAILLE_META;
 	}
 
 	public static function desarmer_drapeau_meta() {
 		self::$drapeau_meta = false;
+
+		remove_filter( 'wp_get_attachment_image_src', array( __CLASS__, 'filtrer_image_src_meta' ), 10 );
 	}
 
 	/**
@@ -107,7 +124,19 @@ class ImagesLegeres_Flux {
 	 * l'adresse (et les dimensions) par celles du fichier de flux quand il existe.
 	 */
 	public static function filtrer_image_src_meta( $image, $attachment_id, $size, $icon ) {
-		if ( ! $image || ! self::$drapeau_meta || ! self::meta_actif() ) {
+		if ( ! self::$drapeau_meta || ! self::meta_actif() ) {
+			return $image;
+		}
+
+		// SEC-3 : hors du jeton de taille rendu à Meta, le détournement ne vaut que pour la
+		// résolution qui suit immédiatement l'armement. Au-delà, le drapeau est désarmé et
+		// le filtre retiré : une image rendue plus tard dans la même requête (vignette de
+		// thème, écran d'administration) sort à sa taille normale.
+		if ( self::TAILLE_META !== $size ) {
+			self::desarmer_drapeau_meta();
+		}
+
+		if ( ! $image ) {
 			return $image;
 		}
 
@@ -219,6 +248,12 @@ class ImagesLegeres_Flux {
 	 * pièce jointe (empreinte précédente).
 	 */
 	public static function generer( $attachment_id ) {
+		$attachment_id = (int) $attachment_id;
+
+		if ( $attachment_id <= 0 ) {
+			return array( 'etat' => 'erreur', 'motif' => 'identifiant de pièce jointe invalide' );
+		}
+
 		if ( ! ImagesLegeres_Moteur::est_image_produit( $attachment_id ) ) {
 			return array( 'etat' => 'ignore', 'motif' => 'pas une image de produit' );
 		}
@@ -281,6 +316,7 @@ class ImagesLegeres_Flux {
 			$image->setImageAlphaChannel( Imagick::ALPHACHANNEL_REMOVE );
 
 			wp_mkdir_p( self::dossier_absolu() );
+			ImagesLegeres_Protection::poser_flux();
 
 			$tmp = self::dossier_absolu() . $nom_fichier . '.tmp-' . wp_generate_password( 8, false, false );
 			$image->writeImage( $tmp );
@@ -320,6 +356,12 @@ class ImagesLegeres_Flux {
 	 * sous le plancher, « tout rendre », ou désinstallation.
 	 */
 	public static function supprimer( $attachment_id ) {
+		$attachment_id = (int) $attachment_id;
+
+		if ( $attachment_id <= 0 ) {
+			return;
+		}
+
 		self::supprimer_autres_fichiers( $attachment_id, null );
 		delete_post_meta( $attachment_id, self::META_FLUX );
 	}
@@ -329,9 +371,12 @@ class ImagesLegeres_Flux {
 	 * (ou tous, si null) : nettoyage de l'empreinte précédente à la régénération.
 	 */
 	private static function supprimer_autres_fichiers( $attachment_id, $fichier_a_garder ) {
-		$dossier = self::dossier_absolu();
+		$dossier       = self::dossier_absolu();
+		// SEC-7 : le motif glob ne doit jamais pouvoir recevoir autre chose qu'un entier —
+		// un « * » effacerait tous les fichiers de flux du site.
+		$attachment_id = (int) $attachment_id;
 
-		if ( ! is_dir( $dossier ) ) {
+		if ( $attachment_id <= 0 || ! is_dir( $dossier ) ) {
 			return;
 		}
 

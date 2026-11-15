@@ -10,8 +10,30 @@ Google et Meta. Aucune dépendance réseau, aucune clé, aucun appel à un servi
 2. Activer l'extension depuis l'écran « Extensions ».
 3. Régler l'extension depuis **Médias → Images légères**.
 
-À l'activation, l'extension crée sa table d'état et initialise ses réglages par défaut.
-Aucun fichier n'est touché avant d'avoir explicitement lancé une conversion ou un lot.
+À l'activation, l'extension crée sa table d'état, initialise ses réglages par défaut et pose
+la protection d'accès de ses dossiers (voir ci-dessous). Aucun fichier n'est touché avant
+d'avoir explicitement lancé une conversion ou un lot.
+
+## Fichiers produits et protection d'accès
+
+L'extension écrit dans `wp-content/uploads` :
+
+| Chemin | Contenu | Servi publiquement |
+|---|---|---|
+| `<nom>.jpg.webp`, `<nom>.png.webp` | frères WebP de l'original et de chaque sous-taille | oui — c'est l'objet de l'extension |
+| `images-legeres/flux/` | images JPEG carrées des flux Google et Meta | **oui**, obligatoirement : les deux plateformes doivent les télécharger |
+| `images-legeres/originaux/` | copie pleine résolution des originaux retaillés | **non** — refusée par `.htaccess` |
+| `images-legeres/journal-<date>.log` | trace des conversions | **non** — refusée par `.htaccess` |
+
+Les règles de refus sont posées à l'activation, sans condition, et re-posées par tout code
+qui crée un de ces dossiers : un `.htaccess` effacé à la main revient au passage suivant.
+Elles sont écrites en syntaxe Apache 2.4 (`Require all denied`) avec le bloc Apache 2.2 en
+repli, pour ne pas dépendre de `mod_access_compat`.
+
+**Suppression d'une photo** : supprimer définitivement une pièce jointe depuis la médiathèque
+retire aussi tout ce que l'extension avait produit pour elle — frères `.webp` de l'original et
+de chaque sous-taille, copie de `images-legeres/originaux/`, image de flux, lignes d'état.
+Rien ne reste en ligne à une adresse dérivable de l'adresse d'origine.
 
 ## Réglages
 
@@ -35,8 +57,8 @@ wp images-legeres qualite <id>... [--qualite=<n>] [--format=table|json|yaml|csv]
 ```
 
 `orphelins` liste ce qui resterait de l'extension après une désinstallation (table, options,
-métas, drop-ins, dossier `uploads/images-legeres`) ; une liste vide signifie qu'il ne reste
-rien. `convert` traite une pièce jointe (conversion WebP, retaille si le réglage est actif).
+métas, drop-ins, dossier `uploads/images-legeres`, et frères `.webp` encore présents dans
+`uploads`) ; une liste vide signifie qu'il ne reste rien. `convert` traite une pièce jointe (conversion WebP, retaille si le réglage est actif).
 `run` lance le lot hors serveur web (file Action Scheduler ou boucle WP-CLI synchrone),
 refuse de tourner hors plage horaire sauf `--forcer`.
 
@@ -99,7 +121,9 @@ Trois niveaux, dans l'écran d'administration et dans l'écran « Extensions » 
 - **Désactiver** : la réécriture s'arrête, le site revient à ses images d'origine en moins
   d'une minute. Rien n'est supprimé sur le disque ni en base.
 - **Tout rendre** (bouton dans l'encart État) : restaure les originaux retaillés, supprime
-  les fichiers générés (`.webp`, images de flux), puis désinstalle.
+  tous les fichiers générés — frères `.webp` de l'original **et de chaque sous-taille**,
+  images de flux, dossier `images-legeres/` — puis désinstalle. `wp images-legeres orphelins`
+  doit alors rendre une liste vide.
 - **Désinstaller** (depuis l'écran « Extensions ») : supprime la table, les options et les
   métas de l'extension ; laisse les fichiers.
 
@@ -114,9 +138,21 @@ tests/env/up.sh
 tests/env/down.sh
 ```
 
-Tests : `tests/test-activation.sh` (exécuté dans le conteneur, voir ce fichier),
-`tests/test-moteur.sh`, `tests/test-recadrage.sh`, `tests/test-cli-interfaces.sh`,
-`tests/test-flux.sh`, `tests/test-lots.sh`.
+Avant les tests qui utilisent des images témoins (`test-moteur.sh` et les suivants), générer
+les témoins une fois par environnement — ils ne sont pas commités :
+
+```
+docker compose -f tests/env/compose.yml exec -T wordpress \
+  php /var/www/html/wp-content/plugins/images-legeres/tests/fixtures/generer-temoins.php
+```
+
+Tests : un script par sujet dans `tests/` — `test-activation.sh`, `test-moteur.sh`,
+`test-recadrage.sh`, `test-cli-interfaces.sh`, `test-flux.sh`, `test-lots.sh`, et
+`test-securite.sh` (protection d'accès des dossiers, suppression d'une pièce jointe,
+bornage du détournement Meta, traversée de chemin, nettoyage complet).
+`test-activation.sh` tourne **dans** le conteneur `cli`
+(`docker compose -f tests/env/compose.yml run --rm cli bash /var/www/html/wp-content/plugins/images-legeres/tests/test-activation.sh`) ;
+tous les autres tournent depuis l'hôte, le conteneur `cli` n'ayant pas de délégué WebP.
 
 **Chaque suite veut un WordPress jetable neuf** (`tests/env/up.sh` sur des volumes vides).
 Elles comptent des pièces jointes et des lignes de file : enchaînées sur la même instance,

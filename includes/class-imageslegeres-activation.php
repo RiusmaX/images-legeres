@@ -14,6 +14,7 @@ class ImagesLegeres_Activation {
 	const EDITEURS_NATIFS = array( 'WP_Image_Editor_Imagick', 'WP_Image_Editor_GD' );
 
 	public static function activer() {
+		ImagesLegeres_Protection::poser_toutes();
 		ImagesLegeres_Table::creer();
 		ImagesLegeres_File::creer();
 		ImagesLegeres_Reglages::initialiser_defauts();

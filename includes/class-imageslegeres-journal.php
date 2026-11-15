@@ -20,22 +20,13 @@ class ImagesLegeres_Journal {
 		return trailingslashit( self::dossier() ) . 'journal-' . gmdate( 'Y-m-d' ) . '.log';
 	}
 
+	/**
+	 * Crée le dossier du journal et y pose la protection d'accès. La règle ne refuse que les
+	 * fichiers `journal-*.log` : refuser le dossier entier rendrait `flux/` inaccessible à
+	 * Google et à Meta (SEC-2). Détail et syntaxe : ImagesLegeres_Protection.
+	 */
 	public static function preparer_dossier() {
-		$dossier = self::dossier();
-
-		if ( ! file_exists( $dossier ) ) {
-			wp_mkdir_p( $dossier );
-		}
-
-		$index = trailingslashit( $dossier ) . 'index.php';
-		if ( ! file_exists( $index ) ) {
-			file_put_contents( $index, "<?php\n// Silence is golden.\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-		}
-
-		$htaccess = trailingslashit( $dossier ) . '.htaccess';
-		if ( ! file_exists( $htaccess ) ) {
-			file_put_contents( $htaccess, "Order deny,allow\nDeny from all\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-		}
+		ImagesLegeres_Protection::poser_racine();
 	}
 
 	/**
