@@ -24,6 +24,9 @@ class ImagesLegeres_Plugin {
 
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			WP_CLI::add_command( 'images-legeres', 'ImagesLegeres_Cli' );
+			WP_CLI::add_command( 'images-legeres crop', 'ImagesLegeres_Cli_Crop' );
+			WP_CLI::add_command( 'images-legeres alt', 'ImagesLegeres_Cli_Alt' );
+			WP_CLI::add_command( 'images-legeres flux', 'ImagesLegeres_Cli_Flux' );
 		}
 	}
 }

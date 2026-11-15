@@ -137,8 +137,16 @@ class ImagesLegeres_Recadrage {
 	/**
 	 * Valide un rectangle en coordonnées relatives contre le ratio cible réglé : dans l'image
 	 * (0 <= x, y ; x + w <= 1 ; y + h <= 1), ratio à 1 % du ratio cible, carré résultant d'au
-	 * moins 500 px de côté (les dimensions en pixels du rectangle, `$largeur_px`/`$hauteur_px`,
-	 * servent uniquement à ce dernier contrôle).
+	 * moins 500 px de côté.
+	 *
+	 * Le ratio se vérifie sur les dimensions en **pixels** du rectangle (`$largeur_px` /
+	 * `$hauteur_px`) quand elles sont fournies, jamais sur le rapport des coordonnées
+	 * relatives seules : `$w_rel / $h_rel` n'est le ratio réel que si l'image de référence
+	 * est carrée (`largeur_ref == hauteur_ref`), ce qui n'est vrai que pour 81 % des photos
+   * produit (spec § 1). Sur les 19 % restantes (3:4, 4:5, 2:3), cette confusion rejetait un
+	 * rectangle carré valide et pouvait accepter un rectangle réellement hors ratio — trouvé
+	 * en mission 16 en posant un carré 1500×1500 sur un original 2000×1500 (`w_rel` = 0,75,
+	 * `h_rel` = 1,0, ratio calculé 0,75 au lieu de 1,0 attendu).
 	 *
 	 * @return true|WP_Error
 	 */
@@ -151,8 +159,10 @@ class ImagesLegeres_Recadrage {
 			return new WP_Error( 'images_legeres_rectangle_hors_image', 'le rectangle dépasse les bords de l\'image' );
 		}
 
-		$ratio_cible = self::ratio_cible_numerique();
-		$ratio_rectangle = $w_rel / $h_rel;
+		$ratio_cible     = self::ratio_cible_numerique();
+		$ratio_rectangle = ( null !== $largeur_px && null !== $hauteur_px && (float) $hauteur_px > 0 )
+			? ( (float) $largeur_px / (float) $hauteur_px )
+			: ( $w_rel / $h_rel );
 
 		if ( abs( $ratio_rectangle - $ratio_cible ) > self::TOLERANCE_RATIO ) {
 			return new WP_Error(

@@ -3,8 +3,8 @@
  * Commande WP-CLI `wp images-legeres`.
  *
  * `status`, `orphelins` (mission 12) et `convert` (mission 13, moteur). Les sous-commandes
- * `crop`, `alt` et `flux check` (interfaces usine, spec § 10) arrivent avec les missions 15
- * et 18.
+ * `crop`, `alt` et `flux` (interfaces usine, spec § 10) sont dans leurs propres classes
+ * (`ImagesLegeres_Cli_Crop`, `ImagesLegeres_Cli_Alt`, `ImagesLegeres_Cli_Flux`, mission 16).
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -38,6 +38,10 @@ class ImagesLegeres_Cli {
 			array( 'cle' => 'version', 'valeur' => IMAGES_LEGERES_VERSION ),
 			array( 'cle' => 'mode_apercu_actif', 'valeur' => $reglages['mode_apercu_actif'] ? '1' : '0' ),
 			array( 'cle' => 'table_existe', 'valeur' => ImagesLegeres_Table::existe() ? '1' : '0' ),
+			array(
+				'cle'    => 'autre_editeur_detecte',
+				'valeur' => implode( ',', (array) get_option( ImagesLegeres_Activation::OPTION_AUTRE_EDITEUR, array() ) ),
+			),
 		);
 
 		foreach ( array( 'a-faire', 'en-cours', 'fait', 'ignore', 'erreur' ) as $etat ) {

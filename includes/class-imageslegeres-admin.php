@@ -145,6 +145,21 @@ class ImagesLegeres_Admin {
 		);
 		echo '</tbody></table>';
 
+		$autre_editeur = get_option( ImagesLegeres_Activation::OPTION_AUTRE_EDITEUR, array() );
+
+		if ( ! empty( $autre_editeur ) ) {
+			printf(
+				'<div class="notice notice-warning"><p>%s</p></div>',
+				esc_html(
+					sprintf(
+						/* translators: %s : liste des classes d'éditeur d'image détectées */
+						__( 'Un autre éditeur d’image était déjà branché à l’activation (%s) : vérifiez qu’il n’entre pas en conflit avec la conversion WebP et le recadrage.', 'images-legeres' ),
+						implode( ', ', (array) $autre_editeur )
+					)
+				)
+			);
+		}
+
 		echo '<p>' . esc_html__( 'Tout rendre restaure les originaux retaillés, supprime les fichiers générés et désinstalle l’extension.', 'images-legeres' ) . '</p>';
 		echo '<form method="post" onsubmit="return confirm(\'' . esc_js( __( 'Tout rendre : les fichiers générés seront supprimés et l’extension désinstallée. Continuer ?', 'images-legeres' ) ) . '\');">';
 		wp_nonce_field( 'images_legeres_tout_rendre' );

@@ -22,6 +22,7 @@ class ImagesLegeres_Desinstallation {
 	const OPTIONS = array(
 		ImagesLegeres_Reglages::OPTION,
 		'images_legeres_version',
+		ImagesLegeres_Activation::OPTION_AUTRE_EDITEUR,
 	);
 
 	/**

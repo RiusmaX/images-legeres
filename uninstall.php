@@ -12,6 +12,7 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 
 require_once __DIR__ . '/includes/class-imageslegeres-reglages.php';
 require_once __DIR__ . '/includes/class-imageslegeres-table.php';
+require_once __DIR__ . '/includes/class-imageslegeres-activation.php';
 require_once __DIR__ . '/includes/class-imageslegeres-desinstallation.php';
 
 ImagesLegeres_Desinstallation::desinstaller();
