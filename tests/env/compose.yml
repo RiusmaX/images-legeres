@@ -1,4 +1,4 @@
-name: images-legeres-test
+name: ${IL_ENV_NAME:-images-legeres-test}
 
 services:
   db:
@@ -12,7 +12,7 @@ services:
     volumes:
       - db-data:/var/lib/mysql
     ports:
-      - "127.0.0.1:33061:3306"
+      - "127.0.0.1:${IL_DB_PORT:-33061}:3306"
 
   wordpress:
     image: wordpress:php8.4-apache
@@ -32,7 +32,7 @@ services:
       - wordpress-data:/var/www/html
       - ../../:/var/www/html/wp-content/plugins/images-legeres
     ports:
-      - "127.0.0.1:8081:80"
+      - "127.0.0.1:${IL_HTTP_PORT:-8081}:80"
 
   cli:
     image: wordpress:cli-php8.4

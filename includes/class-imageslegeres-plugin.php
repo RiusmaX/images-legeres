@@ -16,6 +16,8 @@ class ImagesLegeres_Plugin {
 			ImagesLegeres_Admin::enregistrer();
 		}
 
+		ImagesLegeres_Service::enregistrer();
+
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			WP_CLI::add_command( 'images-legeres', 'ImagesLegeres_Cli' );
 		}

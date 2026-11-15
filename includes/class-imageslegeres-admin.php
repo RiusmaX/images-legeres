@@ -37,7 +37,8 @@ class ImagesLegeres_Admin {
 		switch ( $action ) {
 			case 'enregistrer_reglages':
 				check_admin_referer( 'images_legeres_reglages' );
-				self::enregistrer_reglages();
+				$reglages = self::enregistrer_reglages();
+				ImagesLegeres_Htaccess::appliquer( ! empty( $reglages['mode_htaccess_actif'] ) );
 				break;
 
 			case 'lot_lancer':
@@ -89,7 +90,7 @@ class ImagesLegeres_Admin {
 			}
 		}
 
-		ImagesLegeres_Reglages::enregistrer( $reglages );
+		return ImagesLegeres_Reglages::enregistrer( $reglages );
 	}
 
 	public static function rendre_page() {
@@ -165,6 +166,7 @@ class ImagesLegeres_Admin {
 		self::ligne_nombre( 'gain_minimal_pourcent', __( 'Gain minimal pour garder le frère (%)', 'images-legeres' ), $reglages );
 		self::ligne_case( 'reecriture_sortie_active', __( 'Réécriture à la sortie', 'images-legeres' ), $reglages );
 		self::ligne_case( 'mode_htaccess_actif', __( 'Mode .htaccess (négociation Accept)', 'images-legeres' ), $reglages );
+		self::ligne_case( 'mode_compatible_actif', __( 'Mode compatible (repli pour les navigateurs sans WebP)', 'images-legeres' ), $reglages );
 		self::ligne_nombre( 'dimension_max_nouveaux_envois', __( 'Dimension maximale des nouveaux envois (px)', 'images-legeres' ), $reglages );
 		self::ligne_case( 'retaille_originaux_active', __( 'Retaille des originaux existants', 'images-legeres' ), $reglages );
 		self::ligne_case( 'harmonisation_produit_active', __( 'Harmonisation produit', 'images-legeres' ), $reglages );

@@ -19,6 +19,7 @@ class ImagesLegeres_Reglages {
 			'gain_minimal_pourcent'        => 10,
 			'reecriture_sortie_active'     => true,
 			'mode_htaccess_actif'          => false,
+			'mode_compatible_actif'        => false,
 			'dimension_max_nouveaux_envois' => 1920,
 			'retaille_originaux_active'    => false,
 			'harmonisation_produit_active' => false,

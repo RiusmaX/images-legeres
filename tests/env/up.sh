@@ -5,6 +5,8 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+IL_HTTP_PORT="${IL_HTTP_PORT:-8081}"
+
 docker compose -f compose.yml up -d
 
 wp() {
@@ -22,7 +24,7 @@ done
 if ! wp core is-installed >/dev/null 2>&1; then
   echo "Installation de WordPress..."
   wp core install \
-    --url="http://localhost:8081" \
+    --url="http://localhost:${IL_HTTP_PORT}" \
     --title="Images légères — test" \
     --admin_user=admin \
     --admin_password=admin \
@@ -36,4 +38,4 @@ if ! wp core is-installed >/dev/null 2>&1; then
   wp plugin activate images-legeres
 fi
 
-echo "WordPress jetable prêt : http://localhost:8081 (admin / admin)"
+echo "WordPress jetable prêt : http://localhost:${IL_HTTP_PORT} (admin / admin)"
