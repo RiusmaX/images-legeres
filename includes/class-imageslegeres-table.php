@@ -115,6 +115,43 @@ class ImagesLegeres_Table {
 		return (array) $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 	}
 
+	/**
+	 * Insère ou met à jour la ligne d'un chemin (unique). Rend l'id de la ligne.
+	 */
+	public static function enregistrer( array $donnees ) {
+		global $wpdb;
+
+		if ( empty( $donnees['chemin'] ) ) {
+			return 0;
+		}
+
+		$table               = self::nom();
+		$donnees['maj']      = current_time( 'mysql', true );
+		$ligne_existante     = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM {$table} WHERE chemin = %s", $donnees['chemin'] ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		if ( $ligne_existante ) {
+			$wpdb->update( $table, $donnees, array( 'id' => $ligne_existante->id ) );
+
+			return (int) $ligne_existante->id;
+		}
+
+		$wpdb->insert( $table, $donnees );
+
+		return (int) $wpdb->insert_id;
+	}
+
+	public static function par_chemin( $chemin ) {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return null;
+		}
+
+		$table = self::nom();
+
+		return $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE chemin = %s", $chemin ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
 	public static function vider() {
 		global $wpdb;
 

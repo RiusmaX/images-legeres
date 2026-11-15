@@ -2,8 +2,9 @@
 /**
  * Commande WP-CLI `wp images-legeres`.
  *
- * Ce socle (mission 12) ne porte que `status` et `orphelins`. Les sous-commandes `crop`,
- * `alt` et `flux check` (interfaces usine, spec § 10) arrivent avec les missions 15 et 18.
+ * `status`, `orphelins` (mission 12) et `convert` (mission 13, moteur). Les sous-commandes
+ * `crop`, `alt` et `flux check` (interfaces usine, spec § 10) arrivent avec les missions 15
+ * et 18.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -103,5 +104,37 @@ class ImagesLegeres_Cli {
 		}
 
 		\WP_CLI\Utils\format_items( \WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ), $orphelins, array( 'type', 'identifiant' ) );
+	}
+
+	/**
+	 * Traite une pièce jointe : conversion WebP de l'original et de ses sous-tailles, et
+	 * retaille de l'original si le réglage est actif. Pour les essais : --dry-run n'écrit
+	 * rien et liste ce qui serait fait.
+	 *
+	 * ## OPTIONS
+	 *
+	 * <id>
+	 * : Identifiant de la pièce jointe.
+	 *
+	 * [--dry-run]
+	 * : N'écrit rien, liste les fichiers qui seraient traités.
+	 *
+	 * @when after_wp_load
+	 */
+	public function convert( $args, $assoc_args ) {
+		$id = (int) $args[0];
+
+		if ( ! $id || 'attachment' !== get_post_type( $id ) ) {
+			WP_CLI::error( 'pièce jointe introuvable : ' . $args[0] );
+		}
+
+		$dry_run   = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'dry-run', false );
+		$resultats = ImagesLegeres_Moteur::traiter_attachment( $id, $dry_run );
+
+		\WP_CLI\Utils\format_items( 'table', $resultats, array( 'chemin', 'etat', 'motif' ) );
+
+		if ( $dry_run ) {
+			WP_CLI::log( 'dry-run : aucune écriture.' );
+		}
 	}
 }
