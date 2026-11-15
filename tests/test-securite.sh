@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests des corrections du contrôle `security` (rapport qa/images-legeres/SECURITY.md,
-# constats SEC-1 à SEC-7). Un bloc par constat : il échoue si le défaut d'origine revient.
+# Tests des corrections du contrôle `security` (rapports qa/images-legeres/SECURITY.md et
+# qa/images-legeres/repasse-1/SECURITY.md, constats SEC-1 à SEC-10). Un bloc par constat :
+# il échoue si le défaut d'origine revient.
 #
 # Tourne depuis l'HÔTE, comme test-flux.sh : le conteneur `cli` n'a pas de délégué WebP
 # utilisable, ce script récupère le binaire wp-cli et l'exécute avec le PHP du conteneur
@@ -240,12 +241,201 @@ VU_PAR_ORPHELINS=$(wp images-legeres orphelins --format=csv 2>/dev/null | grep -
 verifier "le contrôle d'orphelins voit ces frères avant nettoyage (obtenu $VU_PAR_ORPHELINS, attendu 1)" $([[ "${VU_PAR_ORPHELINS:-0}" -eq 1 ]] && echo 0 || echo 1)
 
 wp eval 'ImagesLegeres_Desinstallation::tout_rendre();' >/dev/null
-APRES_TOUT_RENDRE=$(wp eval 'echo count( ImagesLegeres_Desinstallation::lister_freres_webp() );' | tr -d '\r')
-verifier "après « Tout rendre », plus aucun frère .webp (obtenu $APRES_TOUT_RENDRE, attendu 0)" $([[ "${APRES_TOUT_RENDRE:-1}" -eq 0 ]] && echo 0 || echo 1)
+# Balayage BRUT de uploads, et non la liste bornée à la table : après tout_rendre() la
+# table est supprimée, donc la liste bornée serait vide sans rien prouver (SEC-9).
+APRES_TOUT_RENDRE=$(wp eval 'echo count( ImagesLegeres_Desinstallation::lister_tous_freres_webp() );' | tr -d '\r')
+verifier "après « Tout rendre », plus aucun frère .webp sur le disque (obtenu $APRES_TOUT_RENDRE, attendu 0)" $([[ "${APRES_TOUT_RENDRE:-1}" -eq 0 ]] && echo 0 || echo 1)
 
 ORPHELINS=$(wp images-legeres orphelins --format=csv 2>/dev/null | tail -n +2 | grep -c . || true)
 echo "    orphelins restants : ${ORPHELINS:-0}"
 verifier "le contrôle d'orphelins rend une liste vide après « Tout rendre » (obtenu ${ORPHELINS:-0})" $([[ "${ORPHELINS:-1}" -eq 0 ]] && echo 0 || echo 1)
+
+echo
+echo "=== Remise en état après tout_rendre (les blocs suivants ont besoin des tables) ==="
+# tout_rendre() a supprimé les tables et les options : sans cette réactivation, les blocs
+# SEC-8, SEC-9, SEC-10 et SEC-3 travailleraient sur une extension désinstallée.
+wp plugin deactivate images-legeres >/dev/null 2>&1
+wp plugin activate images-legeres >/dev/null 2>&1
+wp eval '
+ImagesLegeres_Reglages::enregistrer( array(
+  "conversion_webp_active"    => true,
+  "retaille_originaux_active" => true,
+  "image_flux_active"         => true,
+  "flux_google_actif"         => true,
+  "flux_meta_actif"           => true,
+) );
+echo "pret";
+' >/dev/null
+
+echo
+echo "=== SEC-8 — le crochet delete_attachment ne sort jamais du dossier uploads ==="
+# Rejoue runs/2026-11-15-monko-wp-perf/preuves/security-8.sh : deux témoins déposés HORS de
+# uploads, atteints par un « .. » dans _wp_attachment_metadata['sizes'][*]['file'] (cas A,
+# borné au .webp) et dans _wp_attached_file (cas B, n'importe quelle extension, .php comprise).
+SEC8=$(wp eval '
+require_once ABSPATH . "wp-admin/includes/image.php";
+require_once ABSPATH . "wp-admin/includes/file.php";
+require_once ABSPATH . "wp-admin/includes/media.php";
+$up = wp_get_upload_dir(); $base = $up["basedir"]; $hors = dirname( $base );
+$faire = function( $nom ) {
+  $im = new Imagick(); $im->newPseudoImage( 1200, 900, "plasma:fractal" );
+  $im->setImageFormat( "jpeg" ); $im->writeImage( "/tmp/" . $nom . ".jpg" ); $im->clear();
+  $p = wp_insert_post( array( "post_type" => "product", "post_title" => "[SEC] " . $nom, "post_status" => "publish" ) );
+  $a = media_handle_sideload( array( "name" => $nom . ".jpg", "tmp_name" => "/tmp/" . $nom . ".jpg" ), $p, "[SEC] " . $nom );
+  if ( is_wp_error( $a ) ) { return array( 0, 0 ); }
+  foreach ( ImagesLegeres_Moteur::traiter_attachment( $a ) as $r ) {}
+  return array( $a, $p );
+};
+
+list( $aA, $pA ) = $faire( "sec8a" );
+$cibleA = $hors . "/temoin-sec8-hors-uploads.png.webp";
+file_put_contents( $cibleA, "TEMOIN A" );
+$m = wp_get_attachment_metadata( $aA );
+$m["sizes"]["piege"] = array( "file" => "../../../temoin-sec8-hors-uploads.png", "width" => 1, "height" => 1, "mime-type" => "image/png" );
+update_post_meta( $aA, "_wp_attachment_metadata", $m );
+
+list( $aB, $pB ) = $faire( "sec8b" );
+// Le cas B n exige que l existence du dossier originaux/, etat de tout site ayant passe un lot.
+wp_mkdir_p( $base . "/images-legeres/originaux" );
+$cibleB = $hors . "/temoin-sec8-hors-uploads.php";
+file_put_contents( $cibleB, "<?php // TEMOIN B" );
+update_post_meta( $aB, "_wp_attached_file", "../../../temoin-sec8-hors-uploads.php" );
+
+clearstatcache( true );
+ImagesLegeres_Cycle_Vie::supprimer_fichiers_produits( $aA );
+ImagesLegeres_Cycle_Vie::supprimer_fichiers_produits( $aB );
+clearstatcache( true );
+$detruits = ( file_exists( $cibleA ) ? 0 : 1 ) + ( file_exists( $cibleB ) ? 0 : 1 );
+@unlink( $cibleA ); @unlink( $cibleB );
+wp_delete_post( $pA, true ); wp_delete_post( $pB, true );
+echo "detruits_hors_uploads=" . $detruits;
+' | tr -d '\r')
+echo "    $SEC8"
+verifier "aucun témoin hors uploads supprimé par delete_attachment (obtenu $SEC8, attendu detruits_hors_uploads=0)" $([[ "$SEC8" == "detruits_hors_uploads=0" ]] && echo 0 || echo 1)
+
+SEC8B=$(wp eval '
+$up = wp_get_upload_dir(); $hors = dirname( $up["basedir"] );
+$ok = ( "" === ImagesLegeres_Moteur::chemin_relatif( $up["basedir"] . "/2026/../../../victime.png" ) ) ? 1 : 0;
+$ok += ( "" === ImagesLegeres_Moteur::chemin_sauvegarde_original( $up["basedir"] . "/../../../victime.php" ) ) ? 1 : 0;
+$ok += ( false === ImagesLegeres_Moteur::sous_uploads( $hors . "/ailleurs.jpg" ) ) ? 1 : 0;
+$ok += ( true === ImagesLegeres_Moteur::sous_uploads( $up["basedir"] . "/2026/11/vrai.jpg" ) ) ? 1 : 0;
+echo "gardes=" . $ok;
+' | tr -d '\r')
+echo "    $SEC8B"
+verifier "les gardes de chemin refusent « .. » et le hors-uploads, acceptent un chemin légitime (obtenu $SEC8B, attendu gardes=4)" $([[ "$SEC8B" == "gardes=4" ]] && echo 0 || echo 1)
+
+echo
+echo "=== SEC-9 — « Tout rendre » n'efface pas les WebP d'un autre outil ==="
+S9=$(creer_sujet "sec9-$$")
+SEC9=$(wp eval '
+$up = wp_get_upload_dir(); $base = trailingslashit( $up["basedir"] );
+$tiers = $base . "tiers-ewww-sec9.jpg.webp";
+file_put_contents( $tiers, "WEBP D UN AUTRE OUTIL" );
+clearstatcache( true );
+$connus = ImagesLegeres_Desinstallation::lister_freres_webp();
+$liste_tiers = ImagesLegeres_Desinstallation::lister_freres_webp_tiers();
+echo "connus=" . count( $connus );
+echo " tiers_vu=" . ( in_array( $tiers, $liste_tiers, true ) ? "oui" : "non" );
+echo " tiers_dans_les_connus=" . ( in_array( $tiers, $connus, true ) ? "OUI" : "non" );
+ImagesLegeres_Desinstallation::supprimer_freres_webp();
+clearstatcache( true );
+echo " tiers_apres=" . ( file_exists( $tiers ) ? "present" : "SUPPRIME" );
+@unlink( $tiers );
+' | tr -d '\r')
+echo "    $SEC9"
+verifier "le WebP d'un autre outil n'est pas compté comme un frère de l'extension" $([[ "$SEC9" == *"tiers_dans_les_connus=non"* ]] && echo 0 || echo 1)
+verifier "il est listé à part comme frère d'un autre outil" $([[ "$SEC9" == *"tiers_vu=oui"* ]] && echo 0 || echo 1)
+verifier "« Tout rendre » le laisse sur le disque (obtenu ${SEC9##* }, attendu tiers_apres=present)" $([[ "$SEC9" == *"tiers_apres=present"* ]] && echo 0 || echo 1)
+verifier "des frères connus de la table ont bien été trouvés à supprimer" $([[ "$SEC9" == "connus=0"* ]] && echo 1 || echo 0)
+
+TIERS_ORPHELINS=$(wp eval '
+$up = wp_get_upload_dir();
+file_put_contents( trailingslashit( $up["basedir"] ) . "tiers-ewww-sec9b.jpg.webp", "X" );
+echo "pret";
+' >/dev/null; wp images-legeres orphelins --format=csv 2>/dev/null | grep -c "autre outil" || true)
+verifier "le contrôle d'orphelins annonce les frères d'un autre outil sur une ligne à part (obtenu ${TIERS_ORPHELINS:-0}, attendu 1)" $([[ "${TIERS_ORPHELINS:-0}" -eq 1 ]] && echo 0 || echo 1)
+wp eval '$up = wp_get_upload_dir(); @unlink( trailingslashit( $up["basedir"] ) . "tiers-ewww-sec9b.jpg.webp" );' >/dev/null
+
+echo
+echo "=== SEC-10 — la protection est re-posée à la mise à jour, pas seulement à l'activation ==="
+SEC10=$(wp eval '
+$up = wp_get_upload_dir();
+$fichier = trailingslashit( $up["basedir"] ) . "images-legeres/.htaccess";
+wp_mkdir_p( dirname( $fichier ) );
+// Etat d un site mis a jour depuis une version anterieure : l ancienne regle, qui rendait
+// le dossier flux/ en 403 pour Google Listings and Ads et Facebook for WooCommerce. Le
+// temoin est le fichier ENTIER : la bonne regle contient elle aussi « Deny from all », dans
+// son bloc de repli Apache 2.2.
+$ancienne = "# version precedente\nDeny from all\n";
+file_put_contents( $fichier, $ancienne );
+update_option( "images_legeres_version", "0.0.1" );
+ImagesLegeres_Plugin::verifier_version();
+clearstatcache( true );
+$contenu = file_exists( $fichier ) ? (string) file_get_contents( $fichier ) : "";
+echo "ancienne_regle_restante=" . ( $contenu === $ancienne ? "OUI" : "non" );
+echo " syntaxe_2_4=" . ( false !== strpos( $contenu, "Require all denied" ) ? "oui" : "NON" );
+echo " version_remise=" . ( get_option( "images_legeres_version" ) === IMAGES_LEGERES_VERSION ? "oui" : "NON" );
+' | tr -d '\r')
+echo "    $SEC10"
+verifier "la règle héritée est remplacée sans attendre une ligne de journal" $([[ "$SEC10" == *"ancienne_regle_restante=non"* ]] && echo 0 || echo 1)
+verifier "la règle re-posée est bien celle en syntaxe Apache 2.4" $([[ "$SEC10" == *"syntaxe_2_4=oui"* ]] && echo 0 || echo 1)
+verifier "la version enregistrée est remise à celle du fichier" $([[ "$SEC10" == *"version_remise=oui"* ]] && echo 0 || echo 1)
+
+SEC10B=$(wp eval '
+$up = wp_get_upload_dir();
+$fichier = trailingslashit( $up["basedir"] ) . "images-legeres/.htaccess";
+$ancienne = "# version precedente\nDeny from all\n";
+file_put_contents( $fichier, $ancienne );
+// Un autre plugin mis a jour ne doit rien declencher.
+ImagesLegeres_Plugin::apres_mise_a_jour( null, array( "type" => "plugin", "action" => "update", "plugins" => array( "autre/autre.php" ) ) );
+clearstatcache( true );
+$apres_autre = ( (string) file_get_contents( $fichier ) === $ancienne ) ? "intacte" : "touchee";
+ImagesLegeres_Plugin::apres_mise_a_jour( null, array( "type" => "plugin", "action" => "update", "plugins" => array( IMAGES_LEGERES_BASENAME ) ) );
+clearstatcache( true );
+$apres_nous = ( (string) file_get_contents( $fichier ) === $ancienne ) ? "NON_REPOSEE" : "reposee";
+echo "autre_plugin=" . $apres_autre . " notre_plugin=" . $apres_nous;
+' | tr -d '\r')
+echo "    $SEC10B"
+verifier "la mise à jour d'un autre plugin ne re-pose rien (obtenu ${SEC10B%% *})" $([[ "$SEC10B" == "autre_plugin=intacte"* ]] && echo 0 || echo 1)
+verifier "la mise à jour de cette extension re-pose la protection (obtenu ${SEC10B##* })" $([[ "$SEC10B" == *"notre_plugin=reposee"* ]] && echo 0 || echo 1)
+
+SEC10C=$(wp eval '
+$up = wp_get_upload_dir();
+$racine = trailingslashit( $up["basedir"] ) . "images-legeres";
+// Etat d un site qui vient de rendre ses fichiers : le dossier n existe plus. La re-pose
+// ne doit pas le recreer, sinon « orphelins » le signale a la requete suivante.
+if ( is_dir( $racine ) ) {
+  $it = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $racine, FilesystemIterator::SKIP_DOTS ), RecursiveIteratorIterator::CHILD_FIRST );
+  foreach ( $it as $f ) { $f->isDir() ? @rmdir( $f->getPathname() ) : @unlink( $f->getPathname() ); }
+  @rmdir( $racine );
+}
+delete_option( "images_legeres_version" );
+clearstatcache( true );
+ImagesLegeres_Plugin::verifier_version();
+clearstatcache( true );
+echo "dossier_ressuscite=" . ( is_dir( $racine ) ? "OUI" : "non" );
+' | tr -d '\r')
+echo "    $SEC10C"
+verifier "la re-pose ne ressuscite pas le dossier supprimé par « Tout rendre » (obtenu $SEC10C)" $([[ "$SEC10C" == "dossier_ressuscite=non" ]] && echo 0 || echo 1)
+
+echo
+echo "=== SEC-3 — hors du jeton de taille Meta, aucune résolution n'est détournée ==="
+S3=$(creer_sujet "sec3b-$$")
+ATT3=$(echo "$S3" | awk '/^ATT /{print $2}')
+SEC3=$(wp eval "
+\$att = (int) '${ATT3}';
+\$flux = ImagesLegeres_Flux::flux_existant( \$att );
+ImagesLegeres_Flux::armer_drapeau_meta( 'full' );
+\$apres_armement = wp_get_attachment_image_src( \$att, 'thumbnail' );
+ImagesLegeres_Flux::armer_drapeau_meta( 'full' );
+\$au_jeton = wp_get_attachment_image_src( \$att, ImagesLegeres_Flux::TAILLE_META );
+ImagesLegeres_Flux::desarmer_drapeau_meta();
+echo 'vignette_detournee=' . ( ( \$flux && \$apres_armement && \$apres_armement[0] === \$flux['url'] ) ? 'OUI' : 'non' );
+echo ' jeton_detourne=' . ( ( \$flux && \$au_jeton && \$au_jeton[0] === \$flux['url'] ) ? 'oui' : 'NON' );
+" | tr -d '\r')
+echo "    $SEC3"
+verifier "la vignette qui suit l'armement sort à sa taille normale (obtenu ${SEC3%% *})" $([[ "$SEC3" == "vignette_detournee=non"* ]] && echo 0 || echo 1)
+verifier "le jeton de taille Meta reste bien détourné vers le fichier de flux (obtenu ${SEC3##* })" $([[ "$SEC3" == *"jeton_detourne=oui"* ]] && echo 0 || echo 1)
 
 echo
 echo "=== Remise en état (réactivation du plugin après tout_rendre) ==="

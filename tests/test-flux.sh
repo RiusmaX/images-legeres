@@ -217,11 +217,25 @@ echo "--- branchement Meta : drapeau posé pendant la génération, retiré apr�
 AVANT_ARMEMENT=$(wp eval "echo wp_get_attachment_image_url( $ID1, 'full' );" | tr -d '\r')
 verifier "avant armement : adresse d'origine (pas de flux) (obtenu $AVANT_ARMEMENT)" $([[ "$AVANT_ARMEMENT" != *"/images-legeres/flux/"* ]] && echo 0 || echo 1)
 
+# Le parcours réel de Facebook for WooCommerce : le filtre rend le nom de taille, et c'est
+# avec CE nom que fbproduct.php résout ensuite l'image. La version précédente de ce test
+# résolvait en « full » et passait quand même, parce que le filtre détournait la première
+# résolution venue — le défaut SEC-3 du rapport de repasse. Il est resserré sur le parcours
+# réel, et complété ci-dessous par le cas qu'il laissait passer.
 PENDANT_ARMEMENT=$(wp eval "
-apply_filters( 'facebook_for_woocommerce_fb_product_image_size', 'full' );
-echo wp_get_attachment_image_url( $ID1, 'full' );
+\$taille = apply_filters( 'facebook_for_woocommerce_fb_product_image_size', 'full' );
+echo wp_get_attachment_image_url( $ID1, \$taille );
 " | tr -d '\r')
 verifier "pendant la génération du flux Meta : adresse de flux (obtenu $PENDANT_ARMEMENT)" $([[ "$PENDANT_ARMEMENT" == *"/images-legeres/flux/"*".jpg" ]] && echo 0 || echo 1)
+
+# SEC-3 : une image résolue à une AUTRE taille juste après l'armement (vignette de thème,
+# écran d'administration) doit sortir intacte — elle partait en pleine dimension du flux
+# avec des dimensions déclarées fausses.
+VIGNETTE_APRES_ARMEMENT=$(wp eval "
+apply_filters( 'facebook_for_woocommerce_fb_product_image_size', 'full' );
+echo wp_get_attachment_image_url( $ID1, 'thumbnail' );
+" | tr -d '\r')
+verifier "juste après l'armement, une vignette n'est pas détournée vers le flux (obtenu $VIGNETTE_APRES_ARMEMENT)" $([[ "$VIGNETTE_APRES_ARMEMENT" != *"/images-legeres/flux/"* ]] && echo 0 || echo 1)
 
 APRES_FIN_GENERATION=$(wp eval "
 do_action( 'wc_facebook_feed_generation_completed' );

@@ -128,12 +128,15 @@ class ImagesLegeres_Flux {
 			return $image;
 		}
 
-		// SEC-3 : hors du jeton de taille rendu à Meta, le détournement ne vaut que pour la
-		// résolution qui suit immédiatement l'armement. Au-delà, le drapeau est désarmé et
-		// le filtre retiré : une image rendue plus tard dans la même requête (vignette de
-		// thème, écran d'administration) sort à sa taille normale.
+		// SEC-3 : le détournement ne vaut que pour le jeton de taille rendu à Meta par
+		// `armer_drapeau_meta()`. Toute autre taille désarme ET sort intacte — la version
+		// précédente désarmait mais détournait quand même cette résolution-là, si bien qu'une
+		// vignette de thème partait en pleine dimension du flux avec des dimensions
+		// déclarées fausses.
 		if ( self::TAILLE_META !== $size ) {
 			self::desarmer_drapeau_meta();
+
+			return $image;
 		}
 
 		if ( ! $image ) {
@@ -380,9 +383,12 @@ class ImagesLegeres_Flux {
 			return;
 		}
 
+		// SEC-8 : troisième point de suppression atteint depuis le crochet `delete_attachment`.
+		// Le motif glob est déjà borné à un entier (SEC-7) et au dossier de flux, mais la
+		// borne explicite coûte un appel et survit à un futur changement de dossier.
 		foreach ( glob( $dossier . $attachment_id . '-*.jpg' ) as $chemin ) {
 			if ( null === $fichier_a_garder || wp_basename( $chemin ) !== $fichier_a_garder ) {
-				wp_delete_file( $chemin );
+				wp_delete_file_from_directory( $chemin, $dossier );
 			}
 		}
 	}

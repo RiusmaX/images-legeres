@@ -40,12 +40,20 @@ class ImagesLegeres_Cycle_Vie {
 
 		$supprimes = array();
 
+		// SEC-8 : tous les chemins supprimés ici sont construits à partir de métadonnées de
+		// la pièce jointe. Core fait la même boucle dans `wp_delete_attachment()` et la borne
+		// avec `wp_delete_file_from_directory()`, qui résout le realpath() et refuse hors du
+		// dossier ; cette extension réimplémentait la boucle sans le garde-fou. La borne est
+		// posée ici en plus des refus de `..` côté ImagesLegeres_Moteur, pour que ce crochet
+		// reste sûr même si une source de chemin change un jour.
+		$uploads = wp_get_upload_dir();
+		$basedir = $uploads['basedir'];
+
 		// 1. Frères .webp de l'original et de chacune de ses sous-tailles.
 		foreach ( ImagesLegeres_Moteur::fichiers_de_attachment( $attachment_id ) as $chemin ) {
 			$frere = $chemin . '.webp';
 
-			if ( file_exists( $frere ) ) {
-				wp_delete_file( $frere );
+			if ( file_exists( $frere ) && wp_delete_file_from_directory( $frere, $basedir ) ) {
 				$supprimes[] = $frere;
 			}
 		}
@@ -56,8 +64,7 @@ class ImagesLegeres_Cycle_Vie {
 		if ( $chemin_original ) {
 			$sauvegarde = ImagesLegeres_Moteur::chemin_sauvegarde_original( $chemin_original );
 
-			if ( file_exists( $sauvegarde ) ) {
-				wp_delete_file( $sauvegarde );
+			if ( '' !== $sauvegarde && file_exists( $sauvegarde ) && wp_delete_file_from_directory( $sauvegarde, $basedir ) ) {
 				$supprimes[] = $sauvegarde;
 			}
 		}

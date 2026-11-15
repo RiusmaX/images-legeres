@@ -224,6 +224,17 @@ class ImagesLegeres_Moteur {
 		}
 
 		$chemin_sauvegarde = self::chemin_sauvegarde_original( $chemin );
+
+		if ( '' === $chemin_sauvegarde ) {
+			$image->clear();
+			$image->destroy();
+
+			return array(
+				'etat'  => 'erreur',
+				'motif' => 'fichier hors du dossier uploads',
+			);
+		}
+
 		wp_mkdir_p( dirname( $chemin_sauvegarde ) );
 		ImagesLegeres_Protection::poser_originaux();
 
@@ -299,9 +310,19 @@ class ImagesLegeres_Moteur {
 		);
 	}
 
+	/**
+	 * Chemin de la copie de sécurité pleine résolution. Rend une chaîne vide quand la source
+	 * ne vit pas sous uploads (SEC-8) : sans ce repli, un `chemin_relatif()` vide aurait
+	 * désigné le dossier `originaux/` lui-même.
+	 */
 	public static function chemin_sauvegarde_original( $chemin_absolu ) {
-		$uploads = wp_get_upload_dir();
 		$relatif = self::chemin_relatif( $chemin_absolu );
+
+		if ( '' === $relatif ) {
+			return '';
+		}
+
+		$uploads = wp_get_upload_dir();
 
 		return trailingslashit( $uploads['basedir'] ) . 'images-legeres/originaux/' . $relatif;
 	}
@@ -368,7 +389,15 @@ class ImagesLegeres_Moteur {
 			return array();
 		}
 
-		$fichiers = array( $chemin );
+		// SEC-8 : les deux sources sont des métadonnées de la pièce jointe, donc des données
+		// d'entrée. Un « .. » dans `_wp_attached_file` ou dans `sizes[*]['file']` sortait du
+		// dossier uploads, et le crochet `delete_attachment` supprimait ce qu'il y trouvait.
+		$fichiers = array();
+
+		if ( self::sous_uploads( $chemin ) ) {
+			$fichiers[] = $chemin;
+		}
+
 		$metadata = wp_get_attachment_metadata( $attachment_id );
 
 		if ( ! empty( $metadata['sizes'] ) ) {
@@ -378,7 +407,7 @@ class ImagesLegeres_Moteur {
 				if ( ! empty( $taille['file'] ) ) {
 					$chemin_taille = trailingslashit( $dossier ) . $taille['file'];
 
-					if ( ! in_array( $chemin_taille, $fichiers, true ) ) {
+					if ( self::sous_uploads( $chemin_taille ) && ! in_array( $chemin_taille, $fichiers, true ) ) {
 						$fichiers[] = $chemin_taille;
 					}
 				}
@@ -388,10 +417,67 @@ class ImagesLegeres_Moteur {
 		return $fichiers;
 	}
 
+	/**
+	 * Chemin d'un fichier relativement au dossier uploads. Rend une chaîne vide si le chemin
+	 * ne vit pas sous uploads.
+	 *
+	 * SEC-8 : c'était un simple str_replace(). Un « .. » dans `_wp_attached_file` traversait
+	 * donc intact jusqu'à `chemin_sauvegarde_original()`, qui rendait un chemin hors de
+	 * uploads, que `ImagesLegeres_Cycle_Vie` supprimait ensuite — n'importe quelle extension,
+	 * `wp-config.php` compris. La garde est ici, pas seulement chez l'appelant, pour que les
+	 * appelants futurs en héritent.
+	 */
 	public static function chemin_relatif( $chemin_absolu ) {
+		$chemin_absolu = (string) $chemin_absolu;
+
+		if ( ! self::sous_uploads( $chemin_absolu ) ) {
+			return '';
+		}
+
 		$uploads = wp_get_upload_dir();
 
-		return str_replace( trailingslashit( $uploads['basedir'] ), '', $chemin_absolu );
+		return str_replace( trailingslashit( wp_normalize_path( $uploads['basedir'] ) ), '', wp_normalize_path( $chemin_absolu ) );
+	}
+
+	/**
+	 * Rend true si le chemin — existant ou non — se résout sous le dossier uploads (SEC-8).
+	 *
+	 * Deux gardes, parce qu'aucune ne suffit seule : refus de tout segment « .. » (un nom de
+	 * fichier légitime n'en a pas, et le fichier visé peut ne pas encore exister, auquel cas
+	 * realpath() ne répond rien), puis confinement par realpath() sous le realpath de
+	 * `basedir` quand le fichier existe — c'est ce second cas qui attrape les liens
+	 * symboliques.
+	 */
+	public static function sous_uploads( $chemin ) {
+		$chemin = (string) $chemin;
+
+		if ( '' === $chemin ) {
+			return false;
+		}
+
+		$uploads = wp_get_upload_dir();
+		$base    = realpath( $uploads['basedir'] );
+
+		if ( ! $base ) {
+			return false;
+		}
+
+		$base      = trailingslashit( wp_normalize_path( $base ) );
+		$normalise = wp_normalize_path( $chemin );
+
+		foreach ( explode( '/', $normalise ) as $segment ) {
+			if ( '..' === $segment ) {
+				return false;
+			}
+		}
+
+		$reel = realpath( $chemin );
+
+		if ( $reel ) {
+			$normalise = wp_normalize_path( $reel );
+		}
+
+		return 0 === strpos( trailingslashit( $normalise ), $base );
 	}
 
 	private static function enregistrer_etat( $attachment_id, array $resultat ) {

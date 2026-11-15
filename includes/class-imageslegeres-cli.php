@@ -121,6 +121,16 @@ class ImagesLegeres_Cli {
 			);
 		}
 
+		// SEC-9 : les WebP à double suffixe d'un autre outil d'optimisation. Comptés à part
+		// et jamais supprimés — le contrôle doit dire ce qu'il voit sans se les attribuer.
+		$tiers = ImagesLegeres_Desinstallation::lister_freres_webp_tiers();
+		if ( ! empty( $tiers ) ) {
+			$orphelins[] = array(
+				'type'        => 'autre outil',
+				'identifiant' => sprintf( 'frères .webp d\'un autre outil (%d, jamais supprimés) — ex. %s', count( $tiers ), ImagesLegeres_Moteur::chemin_relatif( $tiers[0] ) ),
+			);
+		}
+
 		\WP_CLI\Utils\format_items( \WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ), $orphelins, array( 'type', 'identifiant' ) );
 	}
 

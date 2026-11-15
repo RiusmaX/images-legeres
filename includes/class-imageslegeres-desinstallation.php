@@ -47,16 +47,25 @@ class ImagesLegeres_Desinstallation {
 	}
 
 	/**
-	 * Supprime tous les frères `.webp` du dossier uploads — c'est-à-dire tout fichier
-	 * `<nom>.jpg.webp`, `<nom>.jpeg.webp` ou `<nom>.png.webp`. Le double suffixe est la
-	 * signature de l'extension : un WebP produit par autre chose s'appelle `<nom>.webp`, sans
-	 * l'extension d'origine, et n'est donc jamais touché. Rend la liste des chemins supprimés.
+	 * Supprime les frères `.webp` que l'extension a elle-même produits. Rend la liste des
+	 * chemins supprimés.
+	 *
+	 * SEC-9 : cette méthode effaçait tout `<nom>.jpg.webp` trouvé dans uploads, au motif
+	 * qu'un WebP tiers s'appellerait `<nom>.webp` sans l'extension d'origine. C'est faux :
+	 * le double suffixe est imposé par la règle `RewriteCond %{REQUEST_FILENAME}.webp -f`,
+	 * celle-là même que cette extension écrit, et c'est donc aussi la convention d'EWWW
+	 * Image Optimizer, de WebP Express et de ShortPixel. « Tout rendre » détruisait le
+	 * travail d'un autre outil sans le dire. La suppression est désormais bornée à ce que
+	 * `ImagesLegeres_Table` connaît ; le reste est listé par `lister_freres_webp_tiers()`
+	 * et jamais touché.
 	 */
 	public static function supprimer_freres_webp() {
+		$uploads   = wp_get_upload_dir();
+		$basedir   = $uploads['basedir'];
 		$supprimes = array();
 
 		foreach ( self::lister_freres_webp() as $chemin ) {
-			wp_delete_file( $chemin );
+			wp_delete_file_from_directory( $chemin, $basedir );
 
 			if ( ! file_exists( $chemin ) ) {
 				$supprimes[] = $chemin;
@@ -67,12 +76,61 @@ class ImagesLegeres_Desinstallation {
 	}
 
 	/**
-	 * Liste les frères `.webp` présents dans uploads (chemins absolus). Partagé avec le
-	 * contrôle d'orphelins (`wp images-legeres orphelins`), qui doit compter exactement ce
-	 * que « Tout rendre » supprime — un contrôle qui ne voit pas ce qui reste est pire que
-	 * pas de contrôle (SEC-4).
+	 * Frères `.webp` produits par l'extension : ceux dont la source est une ligne de
+	 * `ImagesLegeres_Table`. C'est exactement ce que « Tout rendre » supprime, et ce que
+	 * `wp images-legeres orphelins` doit compter (SEC-4 : un contrôle qui ne voit pas ce qui
+	 * reste est pire que pas de contrôle).
 	 */
 	public static function lister_freres_webp() {
+		$uploads = wp_get_upload_dir();
+		$base    = trailingslashit( $uploads['basedir'] );
+		$freres  = array();
+
+		foreach ( ImagesLegeres_Table::tout() as $ligne ) {
+			if ( empty( $ligne['chemin'] ) ) {
+				continue;
+			}
+
+			$frere = $base . $ligne['chemin'] . '.webp';
+
+			if ( ! ImagesLegeres_Moteur::sous_uploads( $frere ) || ! file_exists( $frere ) ) {
+				continue;
+			}
+
+			if ( ! in_array( $frere, $freres, true ) ) {
+				$freres[] = $frere;
+			}
+		}
+
+		sort( $freres );
+
+		return $freres;
+	}
+
+	/**
+	 * Frères `.webp` présents dans uploads mais inconnus de `ImagesLegeres_Table` : le
+	 * travail d'un autre outil d'optimisation. Listés pour que l'administrateur les voie,
+	 * jamais supprimés (SEC-9).
+	 */
+	public static function lister_freres_webp_tiers() {
+		$connus = self::lister_freres_webp();
+		$tiers  = array();
+
+		foreach ( self::lister_tous_freres_webp() as $chemin ) {
+			if ( ! in_array( $chemin, $connus, true ) ) {
+				$tiers[] = $chemin;
+			}
+		}
+
+		return $tiers;
+	}
+
+	/**
+	 * Balayage brut de uploads : tout fichier `<nom>.jpg.webp`, `<nom>.jpeg.webp` ou
+	 * `<nom>.png.webp`, quelle qu'en soit l'origine. Ne dit rien de qui l'a produit : sert
+	 * de dénominateur à `lister_freres_webp_tiers()` et aux tests.
+	 */
+	public static function lister_tous_freres_webp() {
 		$uploads = wp_get_upload_dir();
 		$base    = untrailingslashit( $uploads['basedir'] );
 

@@ -36,6 +36,37 @@ class ImagesLegeres_Protection {
 	}
 
 	/**
+	 * Re-pose la protection des seuls dossiers qui existent déjà, sans jamais en créer un.
+	 *
+	 * SEC-10 : c'est la forme appelée après une mise à jour. `poser_toutes()` crée les trois
+	 * dossiers ; appelée à chaque requête sur un site qui vient de rendre ses fichiers
+	 * (« Tout rendre »), elle faisait réapparaître `uploads/images-legeres/` tout seul, et
+	 * `wp images-legeres orphelins` le signalait aussitôt.
+	 *
+	 * @return bool true si une protection a été re-posée, false s'il n'y avait rien à protéger.
+	 */
+	public static function reposer_existants() {
+		$uploads = wp_get_upload_dir();
+		$racine  = untrailingslashit( ImagesLegeres_Journal::dossier() );
+
+		if ( ! is_dir( $racine ) ) {
+			return false;
+		}
+
+		self::poser_racine();
+
+		if ( is_dir( trailingslashit( $uploads['basedir'] ) . 'images-legeres/originaux' ) ) {
+			self::poser_originaux();
+		}
+
+		if ( is_dir( untrailingslashit( ImagesLegeres_Flux::dossier_absolu() ) ) ) {
+			self::poser_flux();
+		}
+
+		return true;
+	}
+
+	/**
 	 * `uploads/images-legeres/` : index muet, et refus des seuls fichiers de journal.
 	 * Le dossier lui-même reste traversable — `flux/` en dépend.
 	 */
