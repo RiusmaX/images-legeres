@@ -343,7 +343,11 @@ class ImagesLegeres_Moteur {
 		}
 	}
 
-	private static function est_image_produit( $attachment_id ) {
+	/**
+	 * Rend true si la pièce jointe est rattachée à un produit WooCommerce (image principale ou
+	 * de galerie). Partagé avec ImagesLegeres_Recadrage et ImagesLegeres_Editor (missions 15+).
+	 */
+	public static function est_image_produit( $attachment_id ) {
 		$parent_id = wp_get_post_parent_id( $attachment_id );
 
 		if ( ! $parent_id ) {

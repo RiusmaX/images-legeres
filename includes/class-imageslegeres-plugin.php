@@ -18,6 +18,9 @@ class ImagesLegeres_Plugin {
 
 		ImagesLegeres_Service::enregistrer();
 
+		add_filter( 'wp_image_editors', array( 'ImagesLegeres_Editor', 'enregistrer' ) );
+		add_filter( 'woocommerce_get_image_size_single', array( 'ImagesLegeres_Recadrage', 'filtrer_taille_single' ) );
+
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			WP_CLI::add_command( 'images-legeres', 'ImagesLegeres_Cli' );
 		}
