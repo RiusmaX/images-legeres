@@ -59,6 +59,12 @@ page_anonyme() { curl -s "$1"; }
 page_admin()   { curl -s -b "$COOKIES" "$1"; }
 
 echo "--- préparation : réglages par défaut, harmonisation + aperçu actifs ---"
+# WooCommerce s'installe en « bientôt disponible » tant que l'assistant n'est pas terminé :
+# le visiteur anonyme reçoit la page d'attente, l'administrateur la vraie fiche. Toute la
+# suite compare ce que reçoit un anonyme : sans cette boutique ouverte, elle mesure la page
+# d'attente (F5, cas 3).
+wp option update woocommerce_coming_soon no >/dev/null 2>&1
+wp option update woocommerce_store_pages_only no >/dev/null 2>&1
 wp eval 'ImagesLegeres_Reglages::enregistrer(ImagesLegeres_Reglages::defauts());' >/dev/null
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("harmonisation_produit_active" => true, "mode_apercu_actif" => true));' >/dev/null
 wp option update permalink_structure '' >/dev/null 2>&1
@@ -222,10 +228,36 @@ verifier "fichiers harmonisés aux dimensions carrées attendues (obtenu $CARREE
 
 echo "=== CAS 3 : aperçu désactivé, les visiteurs reçoivent les harmonisées ==="
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null
-FICHE_OUVERTE=$(page_anonyme "$URL_FICHE" | adresses_images)
+
+# Garde-fou : une page d'attente de boutique, ou tout autre gabarit sans galerie, ferait
+# échouer les vérifications suivantes pour une raison qui n'est pas la réécriture.
+PAGE_OUVERTE=$(page_anonyme "$URL_FICHE")
+verifier "aperçu désactivé : l'anonyme reçoit bien la fiche produit (galerie présente)" \
+  $(echo "$PAGE_OUVERTE" | grep -q 'woocommerce-product-gallery__image' && echo 0 || echo 1)
+
+FICHE_OUVERTE=$(echo "$PAGE_OUVERTE" | adresses_images)
 verifier "aperçu désactivé : la fiche anonyme sert les harmonisées" $(echo "$FICHE_OUVERTE" | grep -q 'il-harmonise' && echo 0 || echo 1)
 verifier "aperçu désactivé : les harmonisées sont servies en .webp" $(echo "$FICHE_OUVERTE" | grep -q 'il-harmonise.*\.webp' && echo 0 || echo 1)
+
+# Servies, pas seulement écrites dans le HTML : chaque adresse de l'extension répond 200 à
+# une requête SANS cookie.
+CODES_ANON=""
+ANON_TOUTES_200=0
+for adresse in $(echo "$FICHE_OUVERTE" | grep -E 'il-harmonise|\.webp' || true); do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$adresse")
+  CODES_ANON="$CODES_ANON $CODE"
+  [[ "$CODE" != "200" ]] && ANON_TOUTES_200=1
+done
+verifier "aperçu désactivé : adresses harmonisées et .webp servies 200 à l'anonyme (codes :$CODES_ANON)" \
+  $([[ -n "$CODES_ANON" && "$ANON_TOUTES_200" -eq 0 ]] && echo 0 || echo 1)
+
+# Retour au mode aperçu : le même anonyme doit retrouver exactement les adresses natives.
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => true));' >/dev/null
+FICHE_REFERMEE=$(page_anonyme "$URL_FICHE" | adresses_images)
+verifier "aperçu remis : l'anonyme ne reçoit plus aucune harmonisée ni .webp" \
+  $(echo "$FICHE_REFERMEE" | grep -qE 'il-harmonise|\.webp' && echo 1 || echo 0)
+verifier "aperçu remis : l'anonyme reçoit toujours des adresses d'images natives" \
+  $([[ -n "$FICHE_REFERMEE" ]] && echo 0 || echo 1)
 
 echo "=== CAS 4 : extension désactivée, retour aux adresses natives ==="
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null

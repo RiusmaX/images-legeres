@@ -21,6 +21,7 @@ L'extension écrit dans `wp-content/uploads` :
 | Chemin | Contenu | Servi publiquement |
 |---|---|---|
 | `<nom>.jpg.webp`, `<nom>.png.webp` | frères WebP de l'original et de chaque sous-taille | oui — c'est l'objet de l'extension |
+| `<nom>-il-harmonise-<L>x<H>.<ext>` | sous-tailles produit ramenées au ratio cible | oui, par la réécriture d'adresse |
 | `images-legeres/flux/` | images JPEG carrées des flux Google et Meta | **oui**, obligatoirement : les deux plateformes doivent les télécharger |
 | `images-legeres/originaux/` | copie pleine résolution des originaux retaillés | **non** — refusée par `.htaccess` |
 | `images-legeres/journal-<date>.log` | trace des conversions | **non** — refusée par `.htaccess` |
@@ -35,6 +36,24 @@ retire aussi tout ce que l'extension avait produit pour elle — frères `.webp`
 de chaque sous-taille, copie de `images-legeres/originaux/`, image de flux, lignes d'état.
 Rien ne reste en ligne à une adresse dérivable de l'adresse d'origine.
 
+## Harmonisation des photos produit
+
+Une boutique dont les photos n'ont pas toutes le même cadrage donne une grille de catalogue
+irrégulière. L'extension produit, **à côté** des sous-tailles de WordPress et sans jamais
+les remplacer, une sous-taille au ratio cible par recadrage sur le rectangle posé ou par
+ajout d'un fond, nommée `<nom>-il-harmonise-<L>x<H>.<ext>`.
+
+Trois conséquences voulues :
+
+- **aucun fichier natif n'est touché** : WordPress et WooCommerce gardent la main sur leurs
+  sous-tailles, et l'harmonisée n'entre pas dans `_wp_attachment_metadata['sizes']` ;
+- l'harmonisée n'arrive sur une page que par la **réécriture d'adresse**, donc elle passe
+  par la même garde que le WebP : **mode aperçu actif = administrateurs connectés seuls** ;
+- désactiver l'extension suffit à revenir aux images d'origine, sans rien restaurer.
+
+L'encodage JPEG suit `jpeg_quality` au lieu d'hériter de la qualité de la source : c'est ce
+qui faisait peser 258 Ko à une vignette de 1024 px en production.
+
 ## Réglages
 
 Tous les réglages (qualité WebP, dimension maximale, ratio cible, plage horaire des lots,
@@ -46,6 +65,19 @@ Le **mode aperçu** est actif par défaut : la réécriture des adresses vers le
 visiteurs reçoivent les adresses d'origine jusqu'à ce que le mode aperçu soit désactivé
 volontairement.
 
+Deux valeurs par défaut méritent d'être connues :
+
+- **`gain_minimal_pourcent` vaut 0** (décision du 2026-11-15) : toute image a son WebP. Le
+  seuil ne sert plus qu'à écarter le cas où le WebP pèserait **plus lourd** que l'original ;
+  le JPEG reste alors servi, et `wp images-legeres status` le compte
+  (`fichiers_webp_plus_lourd`). Un site installé avant cette décision est migré au premier
+  changement de version. C'est l'ancien seuil de 10 % qui avait laissé 87 sous-tailles sans
+  WebP en production.
+- **`ssim_imagick_actif` est désactivé** : le SSIM est toujours celui calculé par
+  l'extension sur la **luminance**. `Imagick::compareImages()` moyenne sur les canaux RVB et
+  rend une valeur plus basse (0,99399 contre 0,99738 sur la même paire) : le même seuil ne
+  voudrait pas dire la même chose d'un hébergement à l'autre.
+
 ## Ligne de commande
 
 ```
@@ -54,6 +86,7 @@ wp images-legeres orphelins [--format=table|json|csv|yaml]
 wp images-legeres convert <id> [--dry-run]
 wp images-legeres run [--limite=<n>] [--forcer] [--format=table|json|yaml]
 wp images-legeres qualite <id>... [--qualite=<n>] [--format=table|json|yaml|csv]
+wp images-legeres harmoniser [<id>...] [--dry-run]
 ```
 
 `orphelins` liste ce qui resterait de l'extension après une désinstallation (table, options,
@@ -61,6 +94,9 @@ métas, drop-ins, dossier `uploads/images-legeres`, et frères `.webp` encore pr
 `uploads`) ; une liste vide signifie qu'il ne reste rien. `convert` traite une pièce jointe (conversion WebP, retaille si le réglage est actif).
 `run` lance le lot hors serveur web (file Action Scheduler ou boucle WP-CLI synchrone),
 refuse de tourner hors plage horaire sauf `--forcer`.
+`harmoniser` produit les sous-tailles au ratio cible ; sans identifiant, il prend les images
+produit cadrées (rectangle posé ou fond assumé). `--dry-run` annonce ce qui serait écrit
+sans rien écrire.
 
 ### Mesurer la perte : `qualite`
 
@@ -135,11 +171,12 @@ l'écrit jamais, poser le texte se fait avec `wp post meta update <id> _wp_attac
 
 Trois niveaux, dans l'écran d'administration et dans l'écran « Extensions » :
 
-- **Désactiver** : la réécriture s'arrête, le site revient à ses images d'origine en moins
-  d'une minute. Rien n'est supprimé sur le disque ni en base.
+- **Désactiver** : la réécriture s'arrête, le site revient à ses images d'origine — WebP
+  **et** sous-tailles harmonisées — en moins d'une minute. Rien n'est supprimé sur le disque
+  ni en base.
 - **Tout rendre** (bouton dans l'encart État) : restaure les originaux retaillés, supprime
   tous les fichiers générés — frères `.webp` de l'original **et de chaque sous-taille**,
-  images de flux, dossier `images-legeres/` — puis désinstalle. `wp images-legeres orphelins`
+  sous-tailles harmonisées, images de flux, dossier `images-legeres/` — puis désinstalle. `wp images-legeres orphelins`
   doit alors rendre une liste vide.
 - **Désinstaller** (depuis l'écran « Extensions ») : supprime la table, les options et les
   métas de l'extension ; laisse les fichiers.
