@@ -167,6 +167,12 @@ SORTIE_HARMONISER=$(wp images-legeres harmoniser "$ID_IMAGE" 2>&1)
 NB_HARMONISEES=$(wp eval "echo count( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) );" | tr -d '\r')
 verifier "sous-tailles harmonisées produites (obtenu ${NB_HARMONISEES:-0})" $([[ "${NB_HARMONISEES:-0}" -ge 1 ]] && echo 0 || echo 1)
 
+# CE-1 : sans codec JPEG, `harmoniser` rend « NoDecodeDelegateForThisImageFormat » sur
+# TOUTES les tailles et la recette ne mesure plus que le chemin d'erreur. On l'assèche ici :
+# la sortie de la commande ne doit porter aucune erreur de décodage.
+verifier "harmoniser ne rend aucune erreur de décodage d'image" \
+  $(echo "$SORTIE_HARMONISER" | grep -qi 'NoDecodeDelegate\|NoEncodeDelegate\|ImagickException' && echo 1 || echo 0)
+
 NOMS_DISTINCTS=$(wp eval "
 \$ok = 1;
 foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) as \$l ) {
@@ -224,7 +230,11 @@ foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) as \$l ) {
   \$i->clear();
 }
 echo \$ok . ':' . \$vues;" | tr -d '\r')
-verifier "fichiers harmonisés aux dimensions carrées attendues (obtenu $CARREES)" $([[ "$CARREES" == 1:* ]] && echo 0 || echo 1)
+# CE-1 : « 1:0 » (aucun fichier ouvert) passait pour un succès. Il faut un verdict vert ET
+# au moins un fichier réellement relu par Imagick.
+VUS=${CARREES##*:}
+verifier "fichiers harmonisés aux dimensions carrées attendues (obtenu $CARREES)" \
+  $([[ "$CARREES" == 1:* && "${VUS:-0}" -ge 1 ]] && echo 0 || echo 1)
 
 echo "=== CAS 3 : aperçu désactivé, les visiteurs reçoivent les harmonisées ==="
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null
@@ -258,6 +268,72 @@ verifier "aperçu remis : l'anonyme ne reçoit plus aucune harmonisée ni .webp"
   $(echo "$FICHE_REFERMEE" | grep -qE 'il-harmonise|\.webp' && echo 1 || echo 0)
 verifier "aperçu remis : l'anonyme reçoit toujours des adresses d'images natives" \
   $([[ -n "$FICHE_REFERMEE" ]] && echo 0 || echo 1)
+
+echo "=== CAS 3 bis : le chemin lu en base est revalidé avant d'être servi (SEC-F5-1) ==="
+# Audit du lot F4+F5 : `harmonisee()` servait `$baseurl . '/' . chemin_harmonise` sans aucun
+# contrôle, là où la branche WebP voisine refuse « .. » et confine par realpath. On rejoue la
+# mesure du rapport : ligne d'inventaire réécrite en base avec un chemin de traversée, aperçu
+# coupé, requête ANONYME. Attendu : l'adresse d'origine, et pas la moindre trace de wp-config.
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null
+
+NATIF_PIEGE=$(wp eval "
+global \$wpdb;
+\$lignes = ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE );
+if ( empty( \$lignes ) ) { echo ''; return; }
+\$l = \$lignes[0];
+\$wpdb->update( ImagesLegeres_Harmonisees::nom(), array( 'chemin_harmonise' => '../../../wp-config.php' ), array( 'id' => (int) \$l['id'] ) );
+echo \$l['chemin_natif'] . ' ' . \$l['chemin_harmonise'];
+" | tr -d '\r')
+read -r CHEMIN_NATIF_PIEGE CHEMIN_HARMONISE_PIEGE <<<"$NATIF_PIEGE"
+verifier "ligne d'inventaire piégée posée en base (natif : ${CHEMIN_NATIF_PIEGE:-aucun})" \
+  $([[ -n "$CHEMIN_NATIF_PIEGE" ]] && echo 0 || echo 1)
+
+PAGE_PIEGEE=$(page_anonyme "$URL_FICHE")
+verifier "chemin de traversée : aucune adresse « .. » servie à l'anonyme" \
+  $(echo "$PAGE_PIEGEE" | grep -q 'uploads/\.\.' && echo 1 || echo 0)
+verifier "chemin de traversée : « wp-config » absent du HTML servi à l'anonyme" \
+  $(echo "$PAGE_PIEGEE" | grep -qi 'wp-config' && echo 1 || echo 0)
+verifier "chemin de traversée : l'adresse d'origine est servie à la place" \
+  $(echo "$PAGE_PIEGEE" | grep -qF "$CHEMIN_NATIF_PIEGE" && echo 0 || echo 1)
+
+# Remise en état de l'inventaire : les cas suivants repartent d'un état sain.
+wp eval "
+global \$wpdb;
+\$wpdb->update( ImagesLegeres_Harmonisees::nom(), array( 'chemin_harmonise' => '${CHEMIN_HARMONISE_PIEGE}' ), array( 'chemin_harmonise' => '../../../wp-config.php' ) );
+" >/dev/null
+
+echo "=== CAS 3 ter : une entrée de srcset harmonisée est substituée même sans harmonisée sur le src ==="
+# Réserve « Pour code-quality » du même audit : la balise entière était laissée intacte dès
+# que le `src` n'avait pas d'harmonisée, donc une entrée de `srcset` qui en avait une n'était
+# jamais substituée. Le `src` (et width/height) suit la plus large des harmonisées gardées :
+# laisser le natif en repli servirait un rectangle pendant que le srcset sert des carrés.
+SRCSET_SUBSTITUE=$(wp eval "
+\$u = wp_upload_dir();
+\$base = untrailingslashit( \$u['baseurl'] );
+\$lignes = ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE );
+if ( empty( \$lignes ) ) { echo 'aucune-ligne'; return; }
+\$avec = \$lignes[0];
+\$sans = ltrim( str_replace( trailingslashit( \$u['basedir'] ), '', get_attached_file( $ID_IMAGE ) ), '/' );
+\$html = '<img src=\"' . \$base . '/' . \$sans . '\" srcset=\"' . \$base . '/' . \$avec['chemin_natif'] . ' ' . (int) \$avec['largeur'] . 'w, ' . \$base . '/' . \$sans . ' 1800w\" width=\"1800\" height=\"2400\" />';
+\$sortie = ImagesLegeres_Service::reecrire_tampon( \$html );
+echo ( false !== strpos( \$sortie, \$avec['chemin_harmonise'] ) ? 'substitue' : 'intact' );
+// La passe WebP suit la passe harmonisée : l'adresse gardée peut porter un « .webp » en
+// plus. Ce qui compte ici, c'est qu'il reste UNE entrée, et que ce soit l'harmonisée.
+\$srcset = preg_match( '#srcset=\"([^\"]*)\"#', \$sortie, \$m ) ? \$m[1] : '';
+\$attendue = \$base . '/' . \$avec['chemin_harmonise'] . ' ' . (int) \$avec['largeur'] . 'w';
+\$attendue_webp = \$base . '/' . \$avec['chemin_harmonise'] . '.webp ' . (int) \$avec['largeur'] . 'w';
+echo ( ( \$srcset === \$attendue || \$srcset === \$attendue_webp ) ? ' srcset=propre' : ' srcset=sale[' . \$srcset . ']' );
+echo ( false !== strpos( \$sortie, 'width=\"' . (int) \$avec['largeur'] . '\"' ) ? ' dimensions=suivies' : ' dimensions=natives' );
+" | tr -d '\r')
+echo "    $SRCSET_SUBSTITUE"
+verifier "srcset : l'entrée harmonisée est substituée alors que le src n'en a pas" \
+  $([[ "$SRCSET_SUBSTITUE" == substitue* ]] && echo 0 || echo 1)
+verifier "srcset : seule l'entrée harmonisée est gardée (pas de mélange de rapports)" \
+  $([[ "$SRCSET_SUBSTITUE" == *"srcset=propre"* ]] && echo 0 || echo 1)
+verifier "srcset : width/height suivent la harmonisée retenue" \
+  $([[ "$SRCSET_SUBSTITUE" == *"dimensions=suivies"* ]] && echo 0 || echo 1)
+
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => true));' >/dev/null
 
 echo "=== CAS 4 : extension désactivée, retour aux adresses natives ==="
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null

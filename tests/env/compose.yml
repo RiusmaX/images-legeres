@@ -35,7 +35,11 @@ services:
       - "127.0.0.1:${IL_HTTP_PORT:-8081}:80"
 
   cli:
-    image: wordpress:cli-php8.4
+    # Image officielle + codec JPEG d'ImageMagick (CE-1, voir Dockerfile.cli).
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+    image: images-legeres-cli:test
     depends_on:
       - db
       - wordpress

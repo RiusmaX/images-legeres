@@ -1,0 +1,15 @@
+# Conteneur wp-cli de l'environnement de test, avec le codec JPEG d'ImageMagick.
+#
+# CE-1 (audit du lot F4+F5) : l'image officielle `wordpress:cli-php8.4` embarque bien
+# l'extension PHP Imagick, mais pas le module de codec JPEG d'ImageMagick. Toute lecture
+# ou écriture d'un JPEG y échouait en `NoDecodeDelegateForThisImageFormat` — y compris
+# `wp images-legeres harmoniser`, qui ne s'y exerçait donc que sur son chemin d'erreur.
+#
+# Le PNG, lui, est servi par le cœur d'ImageMagick : il n'a pas de paquet séparé.
+# `Imagick::queryFormats()` rend une liste vide dans cette image, avant comme après : ne
+# pas s'en servir comme sonde, écrire puis relire un JPEG est la seule preuve qui vaut.
+FROM wordpress:cli-php8.4
+
+USER root
+RUN apk add --no-cache imagemagick-jpeg
+USER 33:33

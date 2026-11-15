@@ -70,7 +70,7 @@ class ImagesLegeres_Service {
 		$baseurl    = untrailingslashit( $upload_dir['baseurl'] );
 		$basedir    = untrailingslashit( $upload_dir['basedir'] );
 
-		$html = self::harmoniser_tampon( $html, $baseurl );
+		$html = self::harmoniser_tampon( $html, $baseurl, $basedir );
 
 		if ( ImagesLegeres_Reglages::valeur( 'mode_compatible_actif' ) ) {
 			// Mode compatible (ADR 0001, point 3) : seules les balises <img> reçoivent un
@@ -111,7 +111,7 @@ class ImagesLegeres_Service {
 	 * la largeur d'affichage. `width` et `height` suivent, sinon le navigateur réserve la
 	 * place du natif et déforme l'image.
 	 */
-	private static function harmoniser_tampon( $html, $baseurl ) {
+	private static function harmoniser_tampon( $html, $baseurl, $basedir ) {
 		if ( ! ImagesLegeres_Reglages::valeur( 'harmonisation_produit_active' ) ) {
 			return $html;
 		}
@@ -124,8 +124,8 @@ class ImagesLegeres_Service {
 
 		$reecrit = preg_replace_callback(
 			'#<img\b[^>]*>#i',
-			function ( $correspondance ) use ( $baseurl ) {
-				return self::harmoniser_balise( $correspondance[0], $baseurl );
+			function ( $correspondance ) use ( $baseurl, $basedir ) {
+				return self::harmoniser_balise( $correspondance[0], $baseurl, $basedir );
 			},
 			$html
 		);
@@ -165,49 +165,93 @@ class ImagesLegeres_Service {
 	}
 
 	/** Harmonisée d'une adresse, ou null quand il n'y en a pas. */
-	private static function harmonisee( $adresse, $baseurl ) {
+	private static function harmonisee( $adresse, $baseurl, $basedir ) {
 		$relatif = self::chemin_relatif_adresse( $adresse, $baseurl );
 
 		if ( '' === $relatif || empty( self::$harmonisees[ $relatif ] ) ) {
 			return null;
 		}
 
-		$ligne = self::$harmonisees[ $relatif ];
+		$ligne  = self::$harmonisees[ $relatif ];
+		$chemin = ltrim( (string) $ligne['chemin'], '/' );
+
+		// SEC-F5-1 : le chemin SORTANT vient de la colonne `chemin_harmonise`, pas du HTML.
+		// Le servir tel quel, c'est accorder à une valeur stockée la confiance qu'on refuse
+		// à l'adresse entrante — asymétrie relevée par l'audit du lot F4+F5, et que la
+		// branche WebP voisine (`adresse_frere`) ne commet pas. Même garde qu'elle : refus
+		// de « .. » et confinement realpath sous `basedir`, portés par `sous_uploads()`.
+		// Un chemin qui ne passe pas ne donne AUCUNE substitution : l'adresse d'origine est
+		// servie telle quelle.
+		if ( '' === $chemin || ! ImagesLegeres_Moteur::sous_uploads( trailingslashit( $basedir ) . $chemin ) ) {
+			return null;
+		}
 
 		return array(
-			'adresse' => $baseurl . '/' . $ligne['chemin'],
+			'adresse' => $baseurl . '/' . $chemin,
 			'largeur' => (int) $ligne['largeur'],
 			'hauteur' => (int) $ligne['hauteur'],
 		);
 	}
 
-	private static function harmoniser_balise( $balise, $baseurl ) {
-		if ( ! preg_match( '#\bsrc=["\']([^"\']+)["\']#i', $balise, $sous ) ) {
-			return $balise;
+	/** La plus large d'un jeu de variantes harmonisées. */
+	private static function plus_large( array $variantes ) {
+		$meilleure = null;
+
+		foreach ( $variantes as $variante ) {
+			if ( null === $meilleure || $variante['largeur'] > $meilleure['largeur'] ) {
+				$meilleure = $variante;
+			}
 		}
 
-		$cible = self::harmonisee( $sous[1], $baseurl );
+		return $meilleure;
+	}
+
+	private static function harmoniser_balise( $balise, $baseurl, $basedir ) {
+		$cible = null;
+
+		if ( preg_match( '#\bsrc=["\']([^"\']+)["\']#i', $balise, $sous ) ) {
+			$cible = self::harmonisee( $sous[1], $baseurl, $basedir );
+		}
+
+		$gardees  = array();
+		$a_srcset = (bool) preg_match( '#\bsrcset=["\']([^"\']+)["\']#i', $balise, $ss );
+
+		if ( $a_srcset ) {
+			foreach ( array_filter( array_map( 'trim', explode( ',', $ss[1] ) ) ) as $partie ) {
+				$segments = preg_split( '#\s+#', $partie, 2 );
+				$variante = self::harmonisee( $segments[0], $baseurl, $basedir );
+
+				if ( $variante ) {
+					$gardees[ $variante['adresse'] ] = $variante;
+				}
+			}
+		}
 
 		if ( null === $cible ) {
-			return $balise;
+			if ( empty( $gardees ) ) {
+				return $balise;
+			}
+
+			// Le `src` n'a pas d'harmonisée mais une entrée du `srcset` en a une : on
+			// substitue quand même cette entrée. Le `src` (et `width`/`height`) suit la plus
+			// large des harmonisées gardées — laisser le natif servirait un rectangle en
+			// repli pendant que le `srcset` sert des carrés, et réserverait la place du
+			// rectangle : c'est exactement le mélange de rapports que le filtrage du
+			// `srcset` existe pour éviter.
+			$cible = self::plus_large( $gardees );
 		}
 
 		$balise = preg_replace( '#\bsrc=["\'][^"\']*["\']#i', 'src="' . esc_attr( $cible['adresse'] ) . '"', $balise, 1 );
 
-		if ( preg_match( '#\bsrcset=["\']([^"\']+)["\']#i', $balise, $ss ) ) {
-			$gardees = array();
-
-			foreach ( array_filter( array_map( 'trim', explode( ',', $ss[1] ) ) ) as $partie ) {
-				$segments = preg_split( '#\s+#', $partie, 2 );
-				$variante = self::harmonisee( $segments[0], $baseurl );
-
-				if ( $variante ) {
-					$gardees[] = $variante['adresse'] . ' ' . $variante['largeur'] . 'w';
-				}
-			}
-
+		if ( $a_srcset ) {
 			if ( $gardees ) {
-				$balise = preg_replace( '#\bsrcset=["\'][^"\']*["\']#i', 'srcset="' . esc_attr( implode( ', ', array_unique( $gardees ) ) ) . '"', $balise, 1 );
+				$entrees = array();
+
+				foreach ( $gardees as $variante ) {
+					$entrees[] = $variante['adresse'] . ' ' . $variante['largeur'] . 'w';
+				}
+
+				$balise = preg_replace( '#\bsrcset=["\'][^"\']*["\']#i', 'srcset="' . esc_attr( implode( ', ', array_unique( $entrees ) ) ) . '"', $balise, 1 );
 			} else {
 				$balise = preg_replace( '#\s+srcset=["\'][^"\']*["\']#i', '', $balise, 1 );
 				$balise = preg_replace( '#\s+sizes=["\'][^"\']*["\']#i', '', $balise, 1 );
