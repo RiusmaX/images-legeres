@@ -304,6 +304,101 @@ else
   verifier "la table d'état contient plusieurs lignes 'fait'" 1
 fi
 
+echo "--- image produit reconnue par l'usage, pas seulement par le rattachement (F4) ---"
+# Sur monkobougie.fr, 105 images posées en image principale ou en galerie d'un produit ont
+# post_parent = 0 : elles étaient converties en qualité générale et sortaient du recadrage,
+# des alt et des flux. Ces témoins rejouent les quatre cas, parent 0 compris.
+ID_PAR_GALERIE=$(importer jpeg-produit.jpg)
+ID_PAR_VIGNETTE=$(importer jpeg-produit.jpg)
+ID_ORPHELINE=$(importer jpeg-produit.jpg)
+
+PRODUIT_GALERIE=$(wp post create --post_type=product --post_title="Produit galerie" --post_status=publish --porcelain | tr -d '\r')
+wp post meta update "$PRODUIT_GALERIE" _product_image_gallery "$ID_PAR_GALERIE" >/dev/null
+
+PRODUIT_VIGNETTE=$(wp post create --post_type=product --post_title="Produit vignette" --post_status=publish --porcelain | tr -d '\r')
+wp post meta update "$PRODUIT_VIGNETTE" _thumbnail_id "$ID_PAR_VIGNETTE" >/dev/null
+
+# Piège de la sous-chaîne : la galerie cite « <id>0 » et « 1<id> », jamais <id> lui-même.
+# Un LIKE '%<id>%' y verrait l'image ; FIND_IN_SET sur la liste réelle, non.
+GALERIE_PIEGE="${ID_ORPHELINE}0,1${ID_ORPHELINE}"
+PRODUIT_PIEGE=$(wp post create --post_type=product --post_title="Produit piège" --post_status=publish --porcelain | tr -d '\r')
+wp post meta update "$PRODUIT_PIEGE" _product_image_gallery "$GALERIE_PIEGE" >/dev/null
+
+est_produit() {
+  wp eval "echo ImagesLegeres_Moteur::est_image_produit($1) ? '1' : '0';" | tr -d '\r'
+}
+
+verifier "image produit par galerie seulement (parent 0)" $([[ "$(est_produit "$ID_PAR_GALERIE")" == "1" ]] && echo 0 || echo 1)
+verifier "image produit par image principale seulement (parent 0)" $([[ "$(est_produit "$ID_PAR_VIGNETTE")" == "1" ]] && echo 0 || echo 1)
+verifier "parent produit sans affichage : toujours reconnue produit" $([[ "$(est_produit "$ID_PRODUIT")" == "1" ]] && echo 0 || echo 1)
+verifier "id $ID_ORPHELINE dans une galerie « $GALERIE_PIEGE » : pas une image produit" $([[ "$(est_produit "$ID_ORPHELINE")" == "0" ]] && echo 0 || echo 1)
+verifier "image jamais affichée et sans parent : pas une image produit" $([[ "$(est_produit "$ID_471")" == "0" ]] && echo 0 || echo 1)
+
+echo "--- requête groupée : même définition que la fonction, en une seule requête ---"
+IDS_LOT=$(wp eval "echo implode(',', ImagesLegeres_Moteur::ids_images_produit());" | tr -d '\r')
+dans_le_lot() { echo ",$IDS_LOT," | grep -q ",$1,"; }
+
+dans_le_lot "$ID_PAR_GALERIE"
+verifier "requête groupée : l'image de galerie est dedans" $?
+dans_le_lot "$ID_PAR_VIGNETTE"
+verifier "requête groupée : l'image principale est dedans" $?
+dans_le_lot "$ID_PRODUIT"
+verifier "requête groupée : l'image rattachée est dedans" $?
+if dans_le_lot "$ID_ORPHELINE"; then
+  verifier "requête groupée : la sous-chaîne de galerie reste dehors" 1
+else
+  verifier "requête groupée : la sous-chaîne de galerie reste dehors" 0
+fi
+
+echo "--- qualité 90 appliquée à une image produit par galerie (parent 0) ---"
+wp images-legeres convert "$ID_PAR_GALERIE" >/dev/null 2>&1
+CHEMIN_PAR_GALERIE=$(wp eval "echo get_attached_file($ID_PAR_GALERIE);" | tr -d '\r')
+POIDS_PAR_GALERIE=$(poids_dans_conteneur "${CHEMIN_PAR_GALERIE}.webp")
+if [[ -n "$POIDS_PAR_GALERIE" && -n "$POIDS_QUALITE_GENERALE" && "$POIDS_PAR_GALERIE" -gt "$POIDS_QUALITE_GENERALE" ]]; then
+  verifier "image de galerie convertie en qualité produit ($POIDS_PAR_GALERIE o > $POIDS_QUALITE_GENERALE o)" 0
+else
+  verifier "image de galerie convertie en qualité produit ($POIDS_PAR_GALERIE o > $POIDS_QUALITE_GENERALE o)" 1
+fi
+
+echo "--- qualite : SSIM calculé en PHP quand la métrique d'Imagick est écartée ---"
+# Reproduit l'hébergement Infomaniak (ImageMagick 6.9.11, sans métrique SSIM), où la
+# commande mourait sans message. Ici la métrique existe : on l'écarte volontairement.
+MESURE_SSIM=$(wp eval "
+\$a = ImagesLegeres_Qualite::mesurer_attachment($ID_QUALITE_PRODUIT);
+define( 'IMAGES_LEGERES_FORCER_SSIM_PHP', true );
+\$b = ImagesLegeres_Qualite::mesurer_attachment($ID_QUALITE_PRODUIT);
+if ( is_wp_error( \$a ) || is_wp_error( \$b ) ) {
+  echo 'ERREUR';
+} else {
+  printf( '%s %s %.5f %.5f', \$a['methode_ssim'], \$b['methode_ssim'], \$a['ssim'], \$b['ssim'] );
+}" | tr -d '\r')
+read -r METHODE_IMAGICK METHODE_PHP SSIM_IMAGICK SSIM_PHP <<<"$MESURE_SSIM"
+
+verifier "mesure de qualité rendue sans erreur dans les deux voies" $([[ -n "${SSIM_PHP:-}" ]] && echo 0 || echo 1)
+verifier "métrique Imagick écartée : la mesure passe par le calcul PHP" $([[ "${METHODE_PHP:-}" == "php" ]] && echo 0 || echo 1)
+if [[ "${METHODE_IMAGICK:-}" == "imagick" && -n "${SSIM_PHP:-}" ]]; then
+  ECART_SSIM=$(awk -v a="$SSIM_IMAGICK" -v b="$SSIM_PHP" 'BEGIN { d = a - b; if ( d < 0 ) d = -d; printf "%.5f", d }')
+  if awk -v e="$ECART_SSIM" 'BEGIN { exit ( e <= 0.01 ) ? 0 : 1 }'; then
+    verifier "SSIM PHP ($SSIM_PHP) et SSIM Imagick ($SSIM_IMAGICK) d'accord à 0,01 près (écart $ECART_SSIM)" 0
+  else
+    verifier "SSIM PHP ($SSIM_PHP) et SSIM Imagick ($SSIM_IMAGICK) d'accord à 0,01 près (écart $ECART_SSIM)" 1
+  fi
+else
+  echo "INFO - métrique SSIM absente de cet ImageMagick : comparaison des deux voies sans objet"
+fi
+
+echo "--- qualite : jamais de mort silencieuse, code de sortie non nul sur échec ---"
+wp images-legeres qualite "$ID_QUALITE_PRODUIT" --format=json >/tmp/resultat-qualite.txt 2>&1
+verifier "wp images-legeres qualite rend 0 sur une image mesurable" $?
+SORTIE_QUALITE_KO=$(wp images-legeres qualite 999999 2>&1)
+CODE_QUALITE_KO=$?
+verifier "qualite sur un identifiant inexistant : code de sortie non nul" $([[ "$CODE_QUALITE_KO" -ne 0 ]] && echo 0 || echo 1)
+if echo "$SORTIE_QUALITE_KO" | grep -qiE "introuvable|erreur|warning"; then
+  verifier "qualite sur un identifiant inexistant : motif affiché" 0
+else
+  verifier "qualite sur un identifiant inexistant : motif affiché" 1
+fi
+
 echo "---"
 if [[ "$ECHECS" -eq 0 ]]; then
   echo "TOUS LES TESTS PASSENT"

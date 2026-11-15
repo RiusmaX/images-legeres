@@ -62,21 +62,31 @@ class ImagesLegeres_Cli_Qualite {
 				continue;
 			}
 
-			if ( null === $qualite_demandee ) {
-				$mesure = ImagesLegeres_Qualite::mesurer_attachment( $id );
-			} else {
-				$chemin = get_attached_file( $id );
-
-				if ( ! $chemin ) {
-					$mesure = new WP_Error( 'images_legeres_attachment_absent', sprintf( 'pièce jointe %d : fichier introuvable', $id ) );
+			// Tout est attrapé, Error comprise : une mesure qui casse doit sortir un motif et
+			// un code de sortie non nul, jamais une mort silencieuse (constat du 2026-11-15
+			// sur ImageMagick 6.9.11, où la métrique SSIM manquante tuait la commande).
+			try {
+				if ( null === $qualite_demandee ) {
+					$mesure = ImagesLegeres_Qualite::mesurer_attachment( $id );
 				} else {
-					$mesure = ImagesLegeres_Qualite::mesurer_a_qualite( $chemin, (int) $qualite_demandee );
+					$chemin = get_attached_file( $id );
 
-					if ( ! is_wp_error( $mesure ) ) {
-						$mesure['attachment_id'] = $id;
-						$mesure['produit']       = ImagesLegeres_Moteur::est_image_produit( $id );
+					if ( ! $chemin ) {
+						$mesure = new WP_Error( 'images_legeres_attachment_absent', sprintf( 'pièce jointe %d : fichier introuvable', $id ) );
+					} else {
+						$mesure = ImagesLegeres_Qualite::mesurer_a_qualite( $chemin, (int) $qualite_demandee );
+
+						if ( ! is_wp_error( $mesure ) ) {
+							$mesure['attachment_id'] = $id;
+							$mesure['produit']       = ImagesLegeres_Moteur::est_image_produit( $id );
+						}
 					}
 				}
+			} catch ( Throwable $erreur ) {
+				$mesure = new WP_Error(
+					'images_legeres_mesure_impossible',
+					sprintf( 'pièce jointe %d : %s', $id, $erreur->getMessage() )
+				);
 			}
 
 			if ( is_wp_error( $mesure ) ) {
@@ -93,6 +103,7 @@ class ImagesLegeres_Cli_Qualite {
 				'qualite'        => $mesure['qualite'],
 				'dimensions'     => $mesure['largeur_webp'] . 'x' . $mesure['hauteur_webp'],
 				'source_retaillee' => $mesure['retaille_normalisee'] ? 'oui' : 'non',
+				'methode_ssim'   => isset( $mesure['methode_ssim'] ) ? $mesure['methode_ssim'] : 'imagick',
 				'ssim'           => number_format( $mesure['ssim'], 5, ',', ' ' ),
 				'seuil_ssim'     => number_format( $seuil, 2, ',', ' ' ),
 				'psnr_db'        => is_finite( $mesure['psnr'] ) ? number_format( $mesure['psnr'], 2, ',', ' ' ) : 'infini',
@@ -110,11 +121,12 @@ class ImagesLegeres_Cli_Qualite {
 		\WP_CLI\Utils\format_items(
 			\WP_CLI\Utils\get_flag_value( $assoc_args, 'format', 'table' ),
 			$lignes,
-			array( 'id', 'produit', 'qualite', 'dimensions', 'source_retaillee', 'ssim', 'seuil_ssim', 'psnr_db', 'poids_source', 'poids_webp', 'gain_pourcent', 'verdict' )
+			array( 'id', 'produit', 'qualite', 'dimensions', 'source_retaillee', 'methode_ssim', 'ssim', 'seuil_ssim', 'psnr_db', 'poids_source', 'poids_webp', 'gain_pourcent', 'verdict' )
 		);
 
 		if ( $echecs > 0 ) {
 			WP_CLI::warning( sprintf( '%d pièce(s) jointe(s) non mesurée(s).', $echecs ) );
+			WP_CLI::halt( 1 );
 		}
 	}
 }

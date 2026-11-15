@@ -229,6 +229,10 @@ class ImagesLegeres_File {
 	 * (ADR 0006 point 7, mission 19b) : appelé quand un réglage de flux change, pour que ces
 	 * images repassent par la file et régénèrent leur fichier de flux. Rend le nombre de
 	 * lignes remises.
+	 *
+	 * La reconnaissance passe par la requête groupée de `ImagesLegeres_Moteur` : une image
+	 * seulement affichée par un produit (image principale ou galerie, sans `post_parent`)
+	 * doit repasser par la file comme les autres.
 	 */
 	public static function remettre_images_produit_a_faire() {
 		global $wpdb;
@@ -237,15 +241,14 @@ class ImagesLegeres_File {
 			return 0;
 		}
 
-		$table = self::nom();
+		$table            = self::nom();
+		$images_produit   = ImagesLegeres_Moteur::sql_images_produit();
 
 		return (int) $wpdb->query(
 			$wpdb->prepare(
 				"UPDATE {$table} f
-				INNER JOIN {$wpdb->posts} image ON image.ID = f.attachment_id
-				INNER JOIN {$wpdb->posts} produit ON produit.ID = image.post_parent AND produit.post_type = 'product'
 				SET f.etat = 'a-faire', f.motif = %s, f.maj = %s
-				WHERE f.etat != 'en-cours'", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				WHERE f.etat != 'en-cours' AND f.attachment_id IN ( {$images_produit} )", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 				'réglages de flux modifiés',
 				current_time( 'mysql', true )
 			)

@@ -363,18 +363,161 @@ class ImagesLegeres_Moteur {
 		}
 	}
 
+	/** Types de contenu WooCommerce qui portent des images produit. */
+	const TYPES_PRODUIT = array( 'product', 'product_variation' );
+
 	/**
-	 * Rend true si la pièce jointe est rattachée à un produit WooCommerce (image principale ou
-	 * de galerie). Partagé avec ImagesLegeres_Recadrage et ImagesLegeres_Editor (missions 15+).
+	 * Rend true si la pièce jointe est une image produit. Définition unique, partagée par le
+	 * choix de qualité (ADR 0007), le recadrage, `crop pending`, `alt missing`, les flux et la
+	 * file des lots : toute autre façon de reconnaître une image produit est un bogue.
+	 *
+	 * Une image est produit si elle est **rattachée** à un produit ou à une variation
+	 * (`post_parent`), **ou** si elle est **affichée** par l'un d'eux — image principale
+	 * (`_thumbnail_id`) ou galerie (`_product_image_gallery`).
+	 *
+	 * Pourquoi l'usage et pas seulement le rattachement : relevé le 2026-11-15 sur
+	 * monkobougie.fr, 105 images posées en image principale ou en galerie d'un produit ont
+	 * `post_parent = 0` (téléversées depuis la médiathèque). Elles étaient converties en
+	 * qualité générale (82) au lieu de la qualité produit (90), et sortaient du recadrage, du
+	 * contrôle des textes alternatifs et des flux.
+	 *
+	 * Le rattachement sans affichage reste reconnu produit (20 cas sur le même site) : sans
+	 * danger, l'image n'est de toute façon servie nulle part.
 	 */
 	public static function est_image_produit( $attachment_id ) {
-		$parent_id = wp_get_post_parent_id( $attachment_id );
+		global $wpdb;
 
-		if ( ! $parent_id ) {
+		$attachment_id = (int) $attachment_id;
+
+		if ( $attachment_id <= 0 ) {
 			return false;
 		}
 
-		return 'product' === get_post_type( $parent_id );
+		$parent_id = wp_get_post_parent_id( $attachment_id );
+
+		if ( $parent_id && in_array( get_post_type( $parent_id ), self::TYPES_PRODUIT, true ) ) {
+			return true;
+		}
+
+		$types = self::types_produit_sql();
+
+		$porteur_vignette = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT meta.post_id FROM {$wpdb->postmeta} meta
+				INNER JOIN {$wpdb->posts} porteur ON porteur.ID = meta.post_id AND porteur.post_type IN ({$types})
+				WHERE meta.meta_key = '_thumbnail_id' AND meta.meta_value = %s LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				(string) $attachment_id
+			)
+		);
+
+		if ( $porteur_vignette ) {
+			return true;
+		}
+
+		// FIND_IN_SET compare des éléments entiers de la liste séparée par des virgules : une
+		// galerie « 123,412 » ne contient pas l'image 12, là où un LIKE '%12%' l'aurait dit.
+		$porteur_galerie = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT post_id FROM {$wpdb->postmeta}
+				WHERE meta_key = '_product_image_gallery'
+				AND FIND_IN_SET( %s, REPLACE( meta_value, ' ', '' ) ) > 0 LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				(string) $attachment_id
+			)
+		);
+
+		return (bool) $porteur_galerie;
+	}
+
+	/**
+	 * Requête SQL qui rend les identifiants des pièces jointes image reconnues produit, au
+	 * sens de `est_image_produit()`. Une seule requête groupée pour tout un lot : les
+	 * commandes qui balaient la médiathèque (`crop pending`, `flux check`, la file des lots)
+	 * ne doivent pas poser une question par image.
+	 */
+	public static function sql_images_produit() {
+		global $wpdb;
+
+		$types = self::types_produit_sql();
+		$image = "p.post_type = 'attachment' AND p.post_mime_type LIKE 'image/%'";
+
+		return "SELECT ID FROM (
+			SELECT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->posts} parent ON parent.ID = p.post_parent AND parent.post_type IN ({$types})
+				WHERE {$image}
+			UNION
+			SELECT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} meta ON meta.meta_key = '_thumbnail_id' AND meta.meta_value = CAST( p.ID AS CHAR )
+				INNER JOIN {$wpdb->posts} porteur ON porteur.ID = meta.post_id AND porteur.post_type IN ({$types})
+				WHERE {$image}
+			UNION
+			SELECT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} galerie ON galerie.meta_key = '_product_image_gallery'
+					AND FIND_IN_SET( p.ID, REPLACE( galerie.meta_value, ' ', '' ) ) > 0
+				WHERE {$image}
+		) images_produit";
+	}
+
+	/** Identifiants des images produit du site, en une requête. */
+	public static function ids_images_produit() {
+		global $wpdb;
+
+		return array_map( 'intval', (array) $wpdb->get_col( self::sql_images_produit() ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
+	/**
+	 * Le produit (ou la variation) qui porte cette image : son parent s'il en est un, sinon
+	 * celui qui l'affiche en image principale, sinon celui qui l'affiche en galerie. Sert
+	 * aux commandes qui rendent compte image par image ; 0 si aucun.
+	 */
+	public static function produit_porteur( $attachment_id ) {
+		global $wpdb;
+
+		$attachment_id = (int) $attachment_id;
+		$parent_id     = wp_get_post_parent_id( $attachment_id );
+
+		if ( $parent_id && in_array( get_post_type( $parent_id ), self::TYPES_PRODUIT, true ) ) {
+			return (int) $parent_id;
+		}
+
+		$types = self::types_produit_sql();
+
+		$porteur = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT meta.post_id FROM {$wpdb->postmeta} meta
+				INNER JOIN {$wpdb->posts} porteur ON porteur.ID = meta.post_id AND porteur.post_type IN ({$types})
+				WHERE meta.meta_key = '_thumbnail_id' AND meta.meta_value = %s
+				ORDER BY meta.post_id ASC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				(string) $attachment_id
+			)
+		);
+
+		if ( $porteur ) {
+			return (int) $porteur;
+		}
+
+		$porteur = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT post_id FROM {$wpdb->postmeta}
+				WHERE meta_key = '_product_image_gallery'
+				AND FIND_IN_SET( %s, REPLACE( meta_value, ' ', '' ) ) > 0
+				ORDER BY post_id ASC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				(string) $attachment_id
+			)
+		);
+
+		return $porteur ? (int) $porteur : 0;
+	}
+
+	/** Liste des types produit, échappée, pour un IN (...) SQL. */
+	private static function types_produit_sql() {
+		$echappes = array_map(
+			function ( $type ) {
+				return "'" . esc_sql( $type ) . "'";
+			},
+			self::TYPES_PRODUIT
+		);
+
+		return implode( ', ', $echappes );
 	}
 
 	/**

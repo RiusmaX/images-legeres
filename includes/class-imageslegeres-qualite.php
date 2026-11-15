@@ -71,7 +71,7 @@ class ImagesLegeres_Qualite {
 		try {
 			$source = new Imagick( $chemin_source );
 			$webp   = new Imagick( $chemin_webp );
-		} catch ( Exception $erreur ) {
+		} catch ( Throwable $erreur ) {
 			return new WP_Error( 'images_legeres_lecture_impossible', $erreur->getMessage() );
 		}
 
@@ -101,23 +101,62 @@ class ImagesLegeres_Qualite {
 			$webp->setImageAlphaChannel( Imagick::ALPHACHANNEL_OFF );
 		}
 
-		try {
-			$ssim = $source->compareImages( $webp, Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR );
-			$psnr = $source->compareImages( $webp, Imagick::METRIC_PEAKSIGNALTONOISERATIO );
-		} catch ( Exception $erreur ) {
-			$source->clear();
-			$source->destroy();
-			$webp->clear();
-			$webp->destroy();
+		$valeur_ssim = null;
+		$valeur_psnr = null;
+		$methode     = 'imagick';
+		$motif_repli = '';
 
-			return new WP_Error( 'images_legeres_comparaison_impossible', $erreur->getMessage() );
+		if ( self::metrique_imagick_disponible() ) {
+			try {
+				$ssim = $source->compareImages( $webp, Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR );
+				$psnr = $source->compareImages( $webp, Imagick::METRIC_PEAKSIGNALTONOISERATIO );
+
+				// compareImages rend array( image de différence, distorsion ) : la distorsion
+				// est la valeur de la métrique. L'image de différence est jetée (sinon elle
+				// reste en mémoire native d'Imagick pour rien).
+				$valeur_ssim = (float) $ssim[1];
+				$valeur_psnr = (float) $psnr[1];
+
+				foreach ( array( $ssim[0], $psnr[0] ) as $difference ) {
+					if ( $difference instanceof Imagick ) {
+						$difference->clear();
+						$difference->destroy();
+					}
+				}
+			} catch ( Throwable $erreur ) {
+				// Throwable et pas Exception : une constante de métrique absente lève une
+				// Error en PHP 8, que `catch ( Exception )` laissait passer — c'est ainsi que
+				// `wp images-legeres qualite` mourait sans message sur ImageMagick 6.
+				$valeur_ssim = null;
+				$valeur_psnr = null;
+				$motif_repli = $erreur->getMessage();
+			}
+		} else {
+			$motif_repli = 'métrique SSIM absente de cette version d\'ImageMagick';
 		}
 
-		// compareImages rend array( image de différence, distorsion ) : la distorsion est la
-		// valeur de la métrique. L'image de différence est jetée (sinon elle reste en
-		// mémoire native d'Imagick pour rien).
-		$valeur_ssim = (float) $ssim[1];
-		$valeur_psnr = (float) $psnr[1];
+		if ( null === $valeur_ssim ) {
+			// Repli : le même SSIM, calculé en PHP (ImagesLegeres_Ssim). On compare les deux
+			// objets déjà normalisés, pas les fichiers : relire le disque annulerait la mise
+			// aux mêmes dimensions et la normalisation colorimétrique faites plus haut.
+			$methode = 'php';
+			$mesure  = ImagesLegeres_Ssim::comparer( $source, $webp );
+
+			if ( is_wp_error( $mesure ) ) {
+				$source->clear();
+				$source->destroy();
+				$webp->clear();
+				$webp->destroy();
+
+				return new WP_Error(
+					'images_legeres_comparaison_impossible',
+					sprintf( '%s (repli PHP après : %s)', $mesure->get_error_message(), $motif_repli )
+				);
+			}
+
+			$valeur_ssim = (float) $mesure['ssim'];
+			$valeur_psnr = (float) $mesure['psnr'];
+		}
 
 		// Piège d'ImageMagick : sur deux images identiques l'erreur quadratique est nulle et
 		// la métrique PSNR rend 0, pas l'infini. Lu tel quel, « PSNR = 0 dB » ferait passer
@@ -125,13 +164,6 @@ class ImagesLegeres_Qualite {
 		// paire identique (SSIM = 1, PSNR rendu = 0).
 		if ( 0.0 === $valeur_psnr && $valeur_ssim >= 0.999999 ) {
 			$valeur_psnr = INF;
-		}
-
-		foreach ( array( $ssim[0], $psnr[0] ) as $difference ) {
-			if ( $difference instanceof Imagick ) {
-				$difference->clear();
-				$difference->destroy();
-			}
 		}
 
 		$source->clear();
@@ -148,6 +180,8 @@ class ImagesLegeres_Qualite {
 			'largeur_webp'        => $largeur_webp,
 			'hauteur_webp'        => $hauteur_webp,
 			'retaille_normalisee' => $retaille_normalisee,
+			'methode_ssim'        => $methode,
+			'motif_repli_ssim'    => $motif_repli,
 			'ssim'                => $valeur_ssim,
 			'psnr'                => is_finite( $valeur_psnr ) ? $valeur_psnr : INF,
 			'poids_source'        => filesize( $chemin_source ),
@@ -173,7 +207,7 @@ class ImagesLegeres_Qualite {
 
 		try {
 			self::encoder_vers( $chemin_source, $temporaire, $qualite );
-		} catch ( Exception $erreur ) {
+		} catch ( Throwable $erreur ) {
 			return new WP_Error( 'images_legeres_encodage_impossible', $erreur->getMessage() );
 		}
 
@@ -229,6 +263,31 @@ class ImagesLegeres_Qualite {
 		$mesure['source_avec_perte'] = in_array( $mesure['format_source'], array( 'jpg', 'jpeg' ), true );
 
 		return $mesure;
+	}
+
+	/**
+	 * La métrique SSIM d'Imagick est-elle utilisable ici ?
+	 *
+	 * `Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR` n'existe qu'avec ImageMagick 7. Sur
+	 * l'hébergement mutualisé d'Infomaniak (ImageMagick 6.9.11) elle n'est pas définie, et
+	 * l'évaluer levait une Error fatale : la commande mourait sans rien afficher.
+	 *
+	 * La constante `IMAGES_LEGERES_FORCER_SSIM_PHP` force le calcul PHP même quand la
+	 * métrique existe. Ce n'est pas un interrupteur de contrôle : les deux voies mesurent la
+	 * même chose et sont comparées par la recette — elle sert à étalonner l'une contre
+	 * l'autre sur un même site, et à faire tourner le test du repli là où ImageMagick 7 est
+	 * présent.
+	 */
+	public static function metrique_imagick_disponible() {
+		if ( defined( 'IMAGES_LEGERES_FORCER_SSIM_PHP' ) && IMAGES_LEGERES_FORCER_SSIM_PHP ) {
+			return false;
+		}
+
+		if ( ! class_exists( 'Imagick' ) ) {
+			return false;
+		}
+
+		return defined( 'Imagick::METRIC_STRUCTURAL_SIMILARITY_ERROR' );
 	}
 
 	/**

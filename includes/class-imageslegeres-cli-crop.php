@@ -213,9 +213,7 @@ class ImagesLegeres_Cli_Crop {
 	 * @when after_wp_load
 	 */
 	public function pending( $args, $assoc_args ) {
-		global $wpdb;
-
-		$ids = $wpdb->get_col( $this->sql_images_produit() ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$ids = ImagesLegeres_Moteur::ids_images_produit();
 
 		$resultats = array();
 
@@ -227,7 +225,7 @@ class ImagesLegeres_Cli_Crop {
 			}
 
 			$metadata = wp_get_attachment_metadata( $id );
-			$parent   = wp_get_post_parent_id( $id );
+			$parent   = ImagesLegeres_Moteur::produit_porteur( $id );
 			$largeur  = isset( $metadata['width'] ) ? (int) $metadata['width'] : 0;
 			$hauteur  = isset( $metadata['height'] ) ? (int) $metadata['height'] : 0;
 
@@ -245,19 +243,6 @@ class ImagesLegeres_Cli_Crop {
 		}
 
 		WP_CLI::print_value( $resultats, $assoc_args );
-	}
-
-	/**
-	 * Requête des pièces jointes image rattachées à un produit (même définition que
-	 * `ImagesLegeres_Moteur::est_image_produit()` : parent direct de type `product`),
-	 * partagée par `pending` et par la sous-commande `flux check`.
-	 */
-	private function sql_images_produit() {
-		global $wpdb;
-
-		return "SELECT p.ID FROM {$wpdb->posts} p
-			INNER JOIN {$wpdb->posts} produit ON p.post_parent = produit.ID AND produit.post_type = 'product'
-			WHERE p.post_type = 'attachment' AND p.post_mime_type LIKE 'image/%'";
 	}
 
 	private function importer_ligne( $ligne ) {

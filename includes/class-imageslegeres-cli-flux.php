@@ -27,13 +27,7 @@ class ImagesLegeres_Cli_Flux {
 	 * @when after_wp_load
 	 */
 	public function check( $args, $assoc_args ) {
-		global $wpdb;
-
-		$ids = $wpdb->get_col(
-			"SELECT p.ID FROM {$wpdb->posts} p
-			INNER JOIN {$wpdb->posts} produit ON p.post_parent = produit.ID AND produit.post_type = 'product'
-			WHERE p.post_type = 'attachment' AND p.post_mime_type LIKE 'image/%'"
-		); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$ids = ImagesLegeres_Moteur::ids_images_produit();
 
 		$resultats = array();
 
@@ -51,7 +45,7 @@ class ImagesLegeres_Cli_Flux {
 				continue;
 			}
 
-			$parent = wp_get_post_parent_id( $id );
+			$parent = ImagesLegeres_Moteur::produit_porteur( $id );
 
 			$resultats[] = array(
 				'id'                => $id,

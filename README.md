@@ -90,6 +90,15 @@ Sans `--qualite`, la commande lit le fichier `.webp` réellement présent. Avec 
 elle réencode dans un fichier temporaire, mesure et efface : rien n'est écrit à côté de
 l'image.
 
+La colonne `methode_ssim` dit d'où vient le chiffre. `imagick` : la métrique d'ImageMagick 7.
+`php` : le même SSIM recalculé par l'extension (`ImagesLegeres_Ssim`), à pleine résolution,
+avec la définition de Wang et al. 2004 — fenêtre gaussienne 11×11 d'écart-type 1,5 sur la
+luminance Rec. 709, celle de `compare -metric SSIM`. Ce repli sert sur les hébergements dont
+l'ImageMagick est en version 6 (Infomaniak mutualisé, 6.9.11) : la métrique y est absente, et
+la commande y mourait sans message avant la mission F4. Étalonné à 0,0009 près du témoin de
+référence sur huit paires, photos de bougies réelles comprises. La commande rend toujours un
+code de sortie non nul dès qu'une pièce jointe n'a pas pu être mesurée, avec son motif.
+
 ### Interfaces usine (recadrage et textes alternatifs)
 
 Trois sous-commandes, en lecture/écriture limitée, pour piloter depuis l'extérieur ce que
@@ -105,6 +114,14 @@ wp images-legeres crop pending [--format=<format>]
 wp images-legeres alt missing [--format=<format>]
 wp images-legeres flux check [--format=<format>]
 ```
+
+**Ce qu'est une « image produit »** (définition unique, `ImagesLegeres_Moteur::est_image_produit()`,
+partagée par la qualité d'encodage, le recadrage, les flux, la file des lots et ces
+commandes) : une pièce jointe rattachée à un produit ou à une variation (`post_parent`), **ou**
+affichée par l'un d'eux — image principale (`_thumbnail_id`) ou galerie
+(`_product_image_gallery`). Une image téléversée depuis la médiathèque puis posée sur une
+fiche garde `post_parent = 0` : c'est le cas le plus courant sur un site réel, et elle compte.
+L'inverse — rattachée mais affichée nulle part — compte aussi.
 
 `crop pending` liste les images produit hors ratio cible sans rectangle ni marque « fond
 assumé » ; `crop import` pose un lot de rectangles depuis un fichier JSON (une entrée invalide
