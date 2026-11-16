@@ -163,7 +163,7 @@ class ImagesLegeres_Harmonisees {
 		$table         = self::nom();
 		$emplacements  = implode( ', ', array_fill( 0, count( $relatifs ), '%s' ) );
 		$lignes        = $wpdb->get_results(
-			$wpdb->prepare( "SELECT chemin_natif, chemin_harmonise, largeur, hauteur FROM {$table} WHERE chemin_natif IN ( {$emplacements} )", $relatifs ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			$wpdb->prepare( "SELECT attachment_id, chemin_natif, chemin_harmonise, largeur, hauteur FROM {$table} WHERE chemin_natif IN ( {$emplacements} )", $relatifs ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
 		);
 
@@ -171,12 +171,60 @@ class ImagesLegeres_Harmonisees {
 
 		foreach ( (array) $lignes as $ligne ) {
 			$map[ $ligne['chemin_natif'] ] = array(
-				'chemin'  => $ligne['chemin_harmonise'],
-				'largeur' => (int) $ligne['largeur'],
-				'hauteur' => (int) $ligne['hauteur'],
+				'attachment' => (int) $ligne['attachment_id'],
+				'chemin'     => $ligne['chemin_harmonise'],
+				'largeur'    => (int) $ligne['largeur'],
+				'hauteur'    => (int) $ligne['hauteur'],
 			);
 		}
 
 		return $map;
+	}
+
+	/**
+	 * La plus grande harmonisée de chacune des pièces jointes données.
+	 *
+	 * Sert la galerie produit : l'agrandissement doit montrer LA MÊME photo que l'affichage,
+	 * dans sa plus grande définition disponible. Chercher cette grande parmi les seules
+	 * adresses présentes dans la balise ne suffit pas — une balise de galerie peut n'avoir
+	 * ni `srcset` ni adresse de grande taille, et le zoom se retrouverait servi plus petit
+	 * que l'original qu'il remplace.
+	 *
+	 * @return array attachment_id => array( chemin, largeur, hauteur )
+	 */
+	public static function plus_grandes_par_attachment( array $ids ) {
+		global $wpdb;
+
+		$ids = array_values( array_unique( array_filter( array_map( 'intval', $ids ) ) ) );
+
+		if ( empty( $ids ) || ! self::existe() ) {
+			return array();
+		}
+
+		$table        = self::nom();
+		$emplacements = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
+		$lignes       = $wpdb->get_results(
+			$wpdb->prepare( "SELECT attachment_id, chemin_harmonise, largeur, hauteur FROM {$table} WHERE attachment_id IN ( {$emplacements} )", $ids ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			ARRAY_A
+		);
+
+		$plus_grandes = array();
+
+		foreach ( (array) $lignes as $ligne ) {
+			$id = (int) $ligne['attachment_id'];
+
+			if ( isset( $plus_grandes[ $id ] ) && $plus_grandes[ $id ]['largeur'] >= (int) $ligne['largeur'] ) {
+				continue;
+			}
+
+			$plus_grandes[ $id ] = array(
+				'attachment' => $id,
+				'chemin'     => $ligne['chemin_harmonise'],
+				'largeur'    => (int) $ligne['largeur'],
+				'hauteur'    => (int) $ligne['hauteur'],
+			);
+		}
+
+		return $plus_grandes;
 	}
 }

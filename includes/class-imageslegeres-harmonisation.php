@@ -30,6 +30,19 @@ class ImagesLegeres_Harmonisation {
 	/** Taille déclarée de la fiche produit, dont le carré remplace l'affichage. */
 	const TAILLE_SINGLE = 'woocommerce_single';
 
+	/**
+	 * Taille propre à l'extension : le plus grand carré que l'original donne SANS
+	 * agrandissement, pour le zoom et la visionneuse de la fiche produit.
+	 *
+	 * Sans elle, la plus grande harmonisée d'une photo est celle de la fiche produit
+	 * (1024 px de côté chez Monko) alors que l'original en fait 1440 : l'agrandissement
+	 * serait servi en nette perte de définition, ou resterait sur le rectangle natif —
+	 * c'est-à-dire sur un autre cadrage que la photo affichée. Elle n'a pas de sous-taille
+	 * native en face : son `chemin_natif` est celui de l'original, ce qui la rend
+	 * substituable partout où la page sert l'original.
+	 */
+	const TAILLE_GRANDE = 'images_legeres_grande';
+
 	/** Reconnaît un fichier produit par l'extension à son seul nom. */
 	public static function est_fichier_harmonise( $chemin ) {
 		return (bool) preg_match( '#' . preg_quote( self::SUFFIXE, '#' ) . '\d+x\d+\.[a-z]+$#i', (string) $chemin );
@@ -62,6 +75,55 @@ class ImagesLegeres_Harmonisation {
 		}
 
 		return $tailles;
+	}
+
+	/**
+	 * Dimensions du carré « grand » d'une pièce jointe : le plus grand que son original
+	 * donne sans agrandir un seul pixel. Rend null quand il n'apporterait rien de plus que
+	 * la plus grande taille déclarée déjà harmonisée.
+	 *
+	 * Rectangle posé : le carré est le rectangle lui-même, en pixels de l'original.
+	 * Fond assumé : l'original tient entier dans le cadre à son échelle native, le côté est
+	 * donc son plus grand côté (rapporté au ratio cible).
+	 *
+	 * @param string     $original          chemin absolu du fichier de la pièce jointe
+	 * @param array|null $rectangle         rectangle relatif posé, ou null (fond ajouté)
+	 * @param array      $tailles_declarees nom => array( largeur, hauteur ) déjà retenues
+	 *
+	 * @return array|null array( largeur, hauteur ) ou null
+	 */
+	public static function taille_grande( $original, $rectangle, array $tailles_declarees ) {
+		$mesure = @getimagesize( $original ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+		if ( ! is_array( $mesure ) || empty( $mesure[0] ) || empty( $mesure[1] ) ) {
+			return null;
+		}
+
+		$ratio = ImagesLegeres_Recadrage::ratio_cible_numerique();
+
+		if ( $ratio <= 0 ) {
+			return null;
+		}
+
+		if ( is_array( $rectangle ) && ! empty( $rectangle['w'] ) ) {
+			$largeur = (int) floor( (float) $rectangle['w'] * (int) $mesure[0] );
+		} else {
+			$largeur = (int) max( (int) $mesure[0], round( (int) $mesure[1] * $ratio ) );
+		}
+
+		$hauteur = (int) max( 1, round( $largeur / $ratio ) );
+
+		if ( $largeur < 1 ) {
+			return null;
+		}
+
+		$plus_grande_declaree = 0;
+
+		foreach ( $tailles_declarees as $dimensions ) {
+			$plus_grande_declaree = max( $plus_grande_declaree, (int) $dimensions[0] );
+		}
+
+		return $largeur > $plus_grande_declaree ? array( $largeur, $hauteur ) : null;
 	}
 
 	/** Chemin absolu du fichier harmonisé d'une pièce jointe pour une taille donnée. */
@@ -123,13 +185,22 @@ class ImagesLegeres_Harmonisation {
 		$rectangle = ImagesLegeres_Recadrage::obtenir( $attachment_id );
 		$resultats = array();
 
-		foreach ( self::tailles_a_harmoniser() as $nom => $dimensions ) {
+		$tailles = self::tailles_a_harmoniser();
+		$grande  = self::taille_grande( $original, $rectangle, $tailles );
+
+		if ( null !== $grande ) {
+			$tailles[ self::TAILLE_GRANDE ] = $grande;
+		}
+
+		foreach ( $tailles as $nom => $dimensions ) {
 			list( $largeur, $hauteur ) = $dimensions;
 
 			$destination = self::chemin_harmonise( $original, $largeur, $hauteur );
-			$natif       = ! empty( $metadata['sizes'][ $nom ]['file'] )
+			// Le carré « grand » ne remplace aucune sous-taille : c'est l'ORIGINAL qu'il
+			// remplace à l'agrandissement, donc c'est lui son chemin natif.
+			$natif = ! empty( $metadata['sizes'][ $nom ]['file'] )
 				? trailingslashit( dirname( $original ) ) . $metadata['sizes'][ $nom ]['file']
-				: '';
+				: ( self::TAILLE_GRANDE === $nom ? $original : '' );
 
 			if ( $dry_run ) {
 				$resultats[] = array( 'taille' => $nom, 'fichier' => wp_basename( $destination ), 'etat' => 'a-faire', 'motif' => 'dry-run : aucune écriture' );

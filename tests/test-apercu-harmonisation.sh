@@ -335,6 +335,178 @@ verifier "srcset : width/height suivent la harmonisée retenue" \
 
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => true));' >/dev/null
 
+echo "=== CAS 3 bis : galerie WooCommerce — zoom et visionneuse sur la photo affichée ==="
+# F8 (constat de production du 2026-11-16, fiche Vanille) : la galerie produit n'agrandit
+# pas le `src`. jQuery Zoom lit `data-src`, PhotoSwipe lit `data-large_image` et ses
+# dimensions déclarées, et retombe sur le `href` du lien parent. Tant que ces valeurs
+# restaient sur l'original, la fiche affichait un carré 1024x1024 et zoomait sur un
+# rectangle 1440x1920 : deux cadrages différents.
+
+# L'harmonisation est rejouée : le carré « grand » (taille images_legeres_grande) n'existe
+# que depuis cette version, et les cas précédents ont touché l'inventaire.
+wp images-legeres harmoniser "$ID_IMAGE" >/dev/null 2>&1
+
+GALERIE=$(wp eval "
+\$u        = wp_upload_dir();
+\$base     = untrailingslashit( \$u['baseurl'] );
+\$basedir  = untrailingslashit( \$u['basedir'] );
+\$original = get_attached_file( $ID_IMAGE );
+\$m        = wp_get_attachment_metadata( $ID_IMAGE );
+\$url_original = \$base . '/' . ImagesLegeres_Moteur::chemin_relatif( \$original );
+\$fichier_single = trailingslashit( dirname( \$original ) ) . \$m['sizes']['woocommerce_single']['file'];
+\$url_single   = \$base . '/' . ImagesLegeres_Moteur::chemin_relatif( \$fichier_single );
+\$l_native = (int) \$m['sizes']['woocommerce_single']['width'];
+\$h_native = (int) \$m['sizes']['woocommerce_single']['height'];
+
+// HTML de galerie produit WooCommerce 11.3, copié dans sa structure réelle.
+\$html = '<div data-thumb=\"' . \$url_single . '\" class=\"woocommerce-product-gallery__image\">'
+  . '<a href=\"' . \$url_original . '\">'
+  . '<img width=\"' . \$l_native . '\" height=\"' . \$h_native . '\" src=\"' . \$url_single . '\" class=\"wp-post-image\" alt=\"\"'
+  . ' data-caption=\"\" data-src=\"' . \$url_original . '\"'
+  . ' data-large_image=\"' . \$url_original . '\"'
+  . ' data-large_image_width=\"' . (int) \$m['width'] . '\"'
+  . ' data-large_image_height=\"' . (int) \$m['height'] . '\" />'
+  . '</a></div>';
+
+\$sortie = ImagesLegeres_Service::reecrire_tampon( \$html );
+
+\$lire = function ( \$nom ) use ( \$sortie ) {
+  return preg_match( '#\b' . preg_quote( \$nom, '#' ) . '=\"([^\"]*)\"#i', \$sortie, \$x ) ? \$x[1] : '';
+};
+
+\$grande = \$lire( 'data-large_image' );
+
+// Dimensions RÉELLES du fichier finalement servi, mesurées sur le disque.
+\$relatif = ltrim( substr( \$grande, strlen( \$base ) ), '/' );
+\$mesure  = @getimagesize( trailingslashit( \$basedir ) . \$relatif );
+\$reel    = ( is_array( \$mesure ) && ! empty( \$mesure[0] ) ) ? \$mesure[0] . 'x' . \$mesure[1] : 'illisible';
+
+echo 'src=' . \$lire( 'src' )
+  . ' dsrc=' . \$lire( 'data-src' )
+  . ' dlarge=' . \$grande
+  . ' href=' . \$lire( 'href' )
+  . ' declare=' . \$lire( 'data-large_image_width' ) . 'x' . \$lire( 'data-large_image_height' )
+  . ' reel=' . \$reel;
+" | tr -d '\r')
+echo "    $GALERIE"
+
+lire_jeton() { echo "$GALERIE" | tr ' ' '\n' | grep "^$1=" | head -1 | cut -d= -f2-; }
+
+G_SRC=$(lire_jeton src)
+G_DSRC=$(lire_jeton dsrc)
+G_DLARGE=$(lire_jeton dlarge)
+G_HREF=$(lire_jeton href)
+G_DECLARE=$(lire_jeton declare)
+G_REEL=$(lire_jeton reel)
+
+verifier "galerie : le src affiché est une harmonisée" \
+  $([[ "$G_SRC" == *"-il-harmonise-"* ]] && echo 0 || echo 1)
+verifier "galerie : data-large_image est une harmonisée (plus de rectangle natif au zoom)" \
+  $([[ "$G_DLARGE" == *"-il-harmonise-"* ]] && echo 0 || echo 1)
+verifier "galerie : data-src (jQuery Zoom) pointe la même adresse que data-large_image" \
+  $([[ -n "$G_DSRC" && "$G_DSRC" == "$G_DLARGE" ]] && echo 0 || echo 1)
+verifier "galerie : le href du lien parent pointe la même adresse" \
+  $([[ -n "$G_HREF" && "$G_HREF" == "$G_DLARGE" ]] && echo 0 || echo 1)
+verifier "galerie : dimensions déclarées égales aux dimensions réelles du fichier servi (déclaré $G_DECLARE, réel $G_REEL)" \
+  $([[ -n "$G_REEL" && "$G_REEL" != "illisible" && "$G_DECLARE" == "$G_REEL" ]] && echo 0 || echo 1)
+
+# Le zoom ne doit pas être servi plus petit que la photo affichée : la grande harmonisée
+# est la plus large de la pièce jointe.
+PLUS_LARGE=$(wp eval "
+\$max = 0;
+foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) as \$l ) { \$max = max( \$max, (int) \$l['largeur'] ); }
+echo \$max;" | tr -d '\r')
+verifier "galerie : le zoom reçoit la plus grande harmonisée de la pièce jointe (${PLUS_LARGE}px)" \
+  $([[ "$G_DECLARE" == "${PLUS_LARGE}x"* ]] && echo 0 || echo 1)
+
+echo "--- une grande harmonisée existe toujours pour le zoom ---"
+# Le zoom ne doit JAMAIS être servi en moins bonne définition que l'original qu'il
+# remplace. WordPress déclare `1536x1536` et `2048x2048`, carrés : sur une photo plus
+# petite qu'eux, la plus grande harmonisée couvre déjà l'original. Quand ce n'est pas le
+# cas (tailles déclarées toutes plus petites), `harmoniser` produit en plus le carré
+# `images_legeres_grande`.
+LARGEUR_ORIGINALE=$(wp eval "\$m = wp_get_attachment_metadata( $ID_IMAGE ); echo (int) \$m['width'];" | tr -d '\r')
+verifier "la plus grande harmonisée couvre l'original (harmonisée ${PLUS_LARGE}px, original ${LARGEUR_ORIGINALE}px)" \
+  $([[ "$PLUS_LARGE" -ge "$LARGEUR_ORIGINALE" ]] && echo 0 || echo 1)
+
+# Tailles déclarées toutes plus petites que l'original : le carré « grand » est calculé sur
+# le rectangle posé, sans agrandir un seul pixel.
+TAILLE_GRANDE=$(wp eval "
+\$original  = get_attached_file( $ID_IMAGE );
+\$rectangle = ImagesLegeres_Recadrage::obtenir( $ID_IMAGE );
+\$petites   = ImagesLegeres_Harmonisation::taille_grande( \$original, \$rectangle, array( 'woocommerce_single' => array( 600, 600 ) ) );
+\$grandes   = ImagesLegeres_Harmonisation::taille_grande( \$original, \$rectangle, array( 'deux_mille' => array( 2048, 2048 ) ) );
+echo 'petites=' . ( \$petites ? \$petites[0] . 'x' . \$petites[1] : 'aucune' );
+echo ' grandes=' . ( \$grandes ? \$grandes[0] . 'x' . \$grandes[1] : 'aucune' );
+" | tr -d '\r')
+echo "    $TAILLE_GRANDE"
+verifier "tailles déclarées trop petites : un carré grand est calculé, à la taille du rectangle posé (1800x1800)" \
+  $([[ "$TAILLE_GRANDE" == "petites=1800x1800"* ]] && echo 0 || echo 1)
+verifier "une taille déclarée plus grande existe déjà : aucun carré supplémentaire" \
+  $([[ "$TAILLE_GRANDE" == *"grandes=aucune"* ]] && echo 0 || echo 1)
+
+echo "--- balise non harmonisée : rien ne bouge ---"
+NON_HARMONISEE=$(wp eval "
+\$u    = wp_upload_dir();
+\$base = untrailingslashit( \$u['baseurl'] );
+\$i = new Imagick();
+\$i->newPseudoImage( 1200, 1600, 'plasma:fractal' );
+\$i->setImageFormat( 'jpeg' );
+\$dest = trailingslashit( \$u['path'] ) . 'sans-cadrage-${RUN_ID}.jpg';
+\$i->writeImage( \$dest );
+\$i->clear();
+\$id = wp_insert_attachment( array( 'post_mime_type' => 'image/jpeg', 'post_title' => 'sans cadrage', 'post_status' => 'inherit' ), \$dest );
+require_once ABSPATH . 'wp-admin/includes/image.php';
+wp_update_attachment_metadata( \$id, wp_generate_attachment_metadata( \$id, \$dest ) );
+\$url = \$base . '/' . ImagesLegeres_Moteur::chemin_relatif( \$dest );
+\$html = '<div class=\"woocommerce-product-gallery__image\"><a href=\"' . \$url . '\"><img src=\"' . \$url . '\" data-src=\"' . \$url . '\" data-large_image=\"' . \$url . '\" data-large_image_width=\"1200\" data-large_image_height=\"1600\" /></a></div>';
+\$sortie = ImagesLegeres_Service::reecrire_tampon( \$html );
+echo ( false === strpos( \$sortie, '-il-harmonise-' ) ? 'aucune-harmonisee' : 'harmonisee-injectee' );
+echo ( false !== strpos( \$sortie, 'data-large_image_width=\"1200\" data-large_image_height=\"1600\"' ) ? ' dimensions=intactes' : ' dimensions=changees' );
+// Pièce jointe jetable : supprimée tout de suite, pour que les cas « Tout rendre » et
+// « orphelins » comptent l'état de la seule photo témoin.
+wp_delete_attachment( \$id, true );
+" | tr -d '\r')
+echo "    $NON_HARMONISEE"
+verifier "balise sans harmonisée : aucune adresse harmonisée injectée" \
+  $([[ "$NON_HARMONISEE" == aucune-harmonisee* ]] && echo 0 || echo 1)
+verifier "balise sans harmonisée : dimensions du zoom laissées telles quelles" \
+  $([[ "$NON_HARMONISEE" == *"dimensions=intactes"* ]] && echo 0 || echo 1)
+
+echo "--- un lien parent qui ne porte pas la grande image n'est pas réécrit ---"
+LIEN_ETRANGER=$(wp eval "
+\$u        = wp_upload_dir();
+\$base     = untrailingslashit( \$u['baseurl'] );
+\$original = get_attached_file( $ID_IMAGE );
+\$m        = wp_get_attachment_metadata( $ID_IMAGE );
+\$url_single = \$base . '/' . ImagesLegeres_Moteur::chemin_relatif( trailingslashit( dirname( \$original ) ) . \$m['sizes']['woocommerce_single']['file'] );
+\$html = '<a href=\"https://exemple.test/fiche-produit\"><img src=\"' . \$url_single . '\" /></a>';
+\$sortie = ImagesLegeres_Service::reecrire_tampon( \$html );
+echo ( false !== strpos( \$sortie, 'href=\"https://exemple.test/fiche-produit\"' ) ? 'lien=intact' : 'lien=ecrase' );
+echo ( false !== strpos( \$sortie, '-il-harmonise-' ) ? ' image=harmonisee' : ' image=native' );
+" | tr -d '\r')
+echo "    $LIEN_ETRANGER"
+verifier "lien parent étranger : le href n'est pas remplacé par une adresse d'image" \
+  $([[ "$LIEN_ETRANGER" == lien=intact* ]] && echo 0 || echo 1)
+verifier "lien parent étranger : l'image est tout de même harmonisée" \
+  $([[ "$LIEN_ETRANGER" == *"image=harmonisee"* ]] && echo 0 || echo 1)
+
+echo "--- aperçu actif : l'anonyme garde le zoom d'origine ---"
+FICHE_ANON_ZOOM=$(page_anonyme "$URL_FICHE")
+verifier "anonyme : aucun data-large_image harmonisé" \
+  $(echo "$FICHE_ANON_ZOOM" | grep -q 'data-large_image="[^"]*il-harmonise' && echo 1 || echo 0)
+verifier "anonyme : aucune adresse harmonisée dans la page" \
+  $(echo "$FICHE_ANON_ZOOM" | grep -q 'il-harmonise' && echo 1 || echo 0)
+verifier "anonyme : adresses d'images inchangées par rapport à l'avant" \
+  $([[ "$(echo "$FICHE_ANON_ZOOM" | adresses_images)" == "$FICHE_ANON_AVANT" ]] && echo 0 || echo 1)
+
+echo "--- administrateur : la fiche servie aligne zoom et affichage ---"
+FICHE_ADMIN_ZOOM=$(page_admin "$URL_FICHE")
+ZOOM_ADMIN=$(echo "$FICHE_ADMIN_ZOOM" | grep -o 'data-large_image="[^"]*"' | head -1)
+verifier "administrateur : data-large_image servi harmonisé (${ZOOM_ADMIN:-absent})" \
+  $([[ "$ZOOM_ADMIN" == *"il-harmonise"* ]] && echo 0 || echo 1)
+
+
 echo "=== CAS 4 : extension désactivée, retour aux adresses natives ==="
 wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null
 wp plugin deactivate images-legeres >/dev/null 2>&1

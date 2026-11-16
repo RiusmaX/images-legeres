@@ -27,6 +27,9 @@ class ImagesLegeres_Service {
 	/** Substitutions natif => harmonisée pour la requête en cours. */
 	private static $harmonisees = array();
 
+	/** Plus grande harmonisée par pièce jointe présente dans la page (zoom, visionneuse). */
+	private static $plus_grandes = array();
+
 	public static function enregistrer() {
 		add_action( 'template_redirect', array( __CLASS__, 'demarrer_tampon' ), PHP_INT_MAX );
 	}
@@ -122,10 +125,21 @@ class ImagesLegeres_Service {
 			return $html;
 		}
 
+		$attachments = array();
+
+		foreach ( self::$harmonisees as $ligne ) {
+			$attachments[] = (int) $ligne['attachment'];
+		}
+
+		self::$plus_grandes = ImagesLegeres_Harmonisees::plus_grandes_par_attachment( $attachments );
+
+		// Le lien parent entre dans le motif : la galerie produit de WooCommerce y range
+		// l'adresse de la grande image (repli de PhotoSwipe), que la passe doit aligner sur
+		// le carré affiché.
 		$reecrit = preg_replace_callback(
-			'#<img\b[^>]*>#i',
+			'#(?:<a\b[^>]*>\s*)?<img\b[^>]*>#i',
 			function ( $correspondance ) use ( $baseurl, $basedir ) {
-				return self::harmoniser_balise( $correspondance[0], $baseurl, $basedir );
+				return self::harmoniser_bloc( $correspondance[0], $baseurl, $basedir );
 			},
 			$html
 		);
@@ -172,7 +186,14 @@ class ImagesLegeres_Service {
 			return null;
 		}
 
-		$ligne  = self::$harmonisees[ $relatif ];
+		return self::variante( self::$harmonisees[ $relatif ], $basedir, $baseurl );
+	}
+
+	/**
+	 * Variante servable d'une ligne d'inventaire, ou null si son chemin ne passe pas la
+	 * garde.
+	 */
+	private static function variante( array $ligne, $basedir, $baseurl ) {
 		$chemin = ltrim( (string) $ligne['chemin'], '/' );
 
 		// SEC-F5-1 : le chemin SORTANT vient de la colonne `chemin_harmonise`, pas du HTML.
@@ -187,10 +208,23 @@ class ImagesLegeres_Service {
 		}
 
 		return array(
-			'adresse' => $baseurl . '/' . $chemin,
-			'largeur' => (int) $ligne['largeur'],
-			'hauteur' => (int) $ligne['hauteur'],
+			'attachment' => (int) $ligne['attachment'],
+			'adresse'    => $baseurl . '/' . $chemin,
+			'chemin'     => $chemin,
+			'largeur'    => (int) $ligne['largeur'],
+			'hauteur'    => (int) $ligne['hauteur'],
 		);
+	}
+
+	/** Plus grande harmonisée d'une pièce jointe, revalidée comme toutes les autres. */
+	private static function plus_grande_de_attachment( $attachment_id, $baseurl, $basedir ) {
+		$attachment_id = (int) $attachment_id;
+
+		if ( empty( self::$plus_grandes[ $attachment_id ] ) ) {
+			return null;
+		}
+
+		return self::variante( self::$plus_grandes[ $attachment_id ], $basedir, $baseurl );
 	}
 
 	/** La plus large d'un jeu de variantes harmonisées. */
@@ -206,7 +240,7 @@ class ImagesLegeres_Service {
 		return $meilleure;
 	}
 
-	private static function harmoniser_balise( $balise, $baseurl, $basedir ) {
+	private static function harmoniser_balise( $balise, $baseurl, $basedir, $lien = '' ) {
 		$cible = null;
 
 		if ( preg_match( '#\bsrc=["\']([^"\']+)["\']#i', $balise, $sous ) ) {
@@ -229,7 +263,10 @@ class ImagesLegeres_Service {
 
 		if ( null === $cible ) {
 			if ( empty( $gardees ) ) {
-				return $balise;
+				// Aucune harmonisée pour cette image : ni l'affichage ni le zoom ne
+				// bougent. C'est la garde qui interdit le mélange carré affiché /
+				// rectangle zoomé — on sert l'original, cohérent avec lui-même.
+				return $lien . $balise;
 			}
 
 			// Le `src` n'a pas d'harmonisée mais une entrée du `srcset` en a une : on
@@ -261,7 +298,134 @@ class ImagesLegeres_Service {
 		$balise = preg_replace( '#\bwidth=["\'][^"\']*["\']#i', 'width="' . (int) $cible['largeur'] . '"', $balise, 1 );
 		$balise = preg_replace( '#\bheight=["\'][^"\']*["\']#i', 'height="' . (int) $cible['hauteur'] . '"', $balise, 1 );
 
-		return $balise;
+		$candidats                      = $gardees;
+		$candidats[ $cible['adresse'] ] = $cible;
+
+		list( $balise, $lien ) = self::aligner_zoom( $balise, $lien, $candidats, $baseurl, $basedir );
+
+		return $lien . $balise;
+	}
+
+	/**
+	 * Aiguille un bloc « lien de galerie + image » vers la réécriture de l'image, en lui
+	 * passant le lien parent ; une image seule passe sans lien.
+	 */
+	private static function harmoniser_bloc( $bloc, $baseurl, $basedir ) {
+		if ( preg_match( '#^(<a\b[^>]*>\s*)(<img\b[^>]*>)$#i', $bloc, $parties ) ) {
+			return self::harmoniser_balise( $parties[2], $baseurl, $basedir, $parties[1] );
+		}
+
+		return self::harmoniser_balise( $bloc, $baseurl, $basedir );
+	}
+
+	/**
+	 * Aligne la grande image du zoom et de la visionneuse sur la plus grande harmonisée
+	 * disponible pour cette image, et le lien parent avec elle.
+	 *
+	 * La galerie produit de WooCommerce ne lit pas le `src` pour agrandir : jQuery Zoom lit
+	 * `data-src`, PhotoSwipe lit `data-large_image` et ses dimensions déclarées, et retombe
+	 * sur le `href` du lien parent. Tant que ces quatre valeurs restaient sur l'original,
+	 * l'affichage montrait le carré harmonisé et l'agrandissement le rectangle entier —
+	 * cadrages différents, zoom qui ne retombe pas sur le point touché (constat du
+	 * 2026-11-16 sur la fiche Vanille : carré 1024x1024 affiché, zoom sur 1440x1920).
+	 */
+	private static function aligner_zoom( $balise, $lien, array $candidats, $baseurl, $basedir ) {
+		$data_src   = self::attribut( $balise, 'data-src' );
+		$data_large = self::attribut( $balise, 'data-large_image' );
+
+		foreach ( array( $data_src, $data_large ) as $adresse ) {
+			if ( '' === $adresse ) {
+				continue;
+			}
+
+			// Même garde que partout ailleurs : chemin revalidé sous uploads (F6), aucune
+			// adresse inventée. Sans harmonisée, le candidat ne rentre pas.
+			$variante = self::harmonisee( $adresse, $baseurl, $basedir );
+
+			if ( $variante ) {
+				$candidats[ $variante['adresse'] ] = $variante;
+			}
+		}
+
+		// La plus grande harmonisée de la pièce jointe elle-même : une balise de galerie
+		// peut n'avoir ni `srcset` ni adresse de grande taille, et le zoom serait alors
+		// servi plus petit que l'original qu'il remplace.
+		foreach ( $candidats as $candidat ) {
+			$variante = self::plus_grande_de_attachment( $candidat['attachment'], $baseurl, $basedir );
+
+			if ( $variante ) {
+				$candidats[ $variante['adresse'] ] = $variante;
+			}
+		}
+
+		$grande = self::plus_large( $candidats );
+
+		if ( null === $grande ) {
+			return array( $balise, $lien );
+		}
+
+		list( $largeur, $hauteur ) = self::dimensions_reelles(
+			trailingslashit( $basedir ) . $grande['chemin'],
+			array( $grande['largeur'], $grande['hauteur'] )
+		);
+
+		$balise = self::remplacer_attribut( $balise, 'data-src', $grande['adresse'] );
+		$balise = self::remplacer_attribut( $balise, 'data-large_image', $grande['adresse'] );
+		$balise = self::remplacer_attribut( $balise, 'data-large_image_width', (string) $largeur );
+		$balise = self::remplacer_attribut( $balise, 'data-large_image_height', (string) $hauteur );
+
+		// Le `href` du lien parent ne se réécrit que s'il portait bien la grande image de
+		// CETTE balise : un lien quelconque autour d'une image produit (fiche, catégorie)
+		// ne doit jamais devenir un lien vers un fichier d'image.
+		if ( '' !== $lien ) {
+			$href = self::attribut( $lien, 'href' );
+
+			if ( '' !== $href && ( $href === $data_large || $href === $data_src ) ) {
+				$lien = self::remplacer_attribut( $lien, 'href', $grande['adresse'] );
+			}
+		}
+
+		return array( $balise, $lien );
+	}
+
+	/** Valeur d'un attribut d'une balise, ou '' quand il est absent. */
+	private static function attribut( $balise, $nom ) {
+		return preg_match( '#\b' . preg_quote( $nom, '#' ) . '=["\']([^"\']*)["\']#i', $balise, $sous ) ? $sous[1] : '';
+	}
+
+	/** Remplace la valeur d'un attribut déjà présent ; n'en ajoute jamais un. */
+	private static function remplacer_attribut( $balise, $nom, $valeur ) {
+		$motif = '#\b' . preg_quote( $nom, '#' ) . '=["\'][^"\']*["\']#i';
+
+		if ( ! preg_match( $motif, $balise ) ) {
+			return $balise;
+		}
+
+		$reecrite = preg_replace( $motif, $nom . '="' . esc_attr( $valeur ) . '"', $balise, 1 );
+
+		return null === $reecrite ? $balise : $reecrite;
+	}
+
+	/**
+	 * Dimensions réelles du fichier servi, lues sur le disque, en cache pour la requête.
+	 *
+	 * Les colonnes `largeur`/`hauteur` de l'inventaire disent la taille DEMANDÉE à la
+	 * génération ; `data-large_image_width`/`height` doivent décrire le fichier réellement
+	 * servi, sinon PhotoSwipe calcule son cadre sur des dimensions qui ne sont pas les
+	 * siennes. Fichier illisible : on garde les dimensions de l'inventaire.
+	 */
+	private static function dimensions_reelles( $chemin_absolu, array $defaut ) {
+		static $cache = array();
+
+		if ( ! array_key_exists( $chemin_absolu, $cache ) ) {
+			$mesure = @getimagesize( $chemin_absolu ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+			$cache[ $chemin_absolu ] = ( is_array( $mesure ) && ! empty( $mesure[0] ) && ! empty( $mesure[1] ) )
+				? array( (int) $mesure[0], (int) $mesure[1] )
+				: null;
+		}
+
+		return null === $cache[ $chemin_absolu ] ? $defaut : $cache[ $chemin_absolu ];
 	}
 
 	/**

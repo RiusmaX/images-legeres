@@ -56,6 +56,26 @@ Trois conséquences voulues :
 L'encodage JPEG suit `jpeg_quality` au lieu d'hériter de la qualité de la source : c'est ce
 qui faisait peser 258 Ko à une vignette de 1024 px en production.
 
+### Zoom et visionneuse de la fiche produit
+
+La galerie de WooCommerce n'agrandit pas le `src` : jQuery Zoom lit `data-src`, PhotoSwipe
+lit `data-large_image` et ses dimensions déclarées, et retombe sur le `href` du lien parent.
+Quand une balise de galerie est harmonisée, la réécriture aligne ces quatre valeurs sur la
+**plus grande harmonisée de la pièce jointe**, pour que l'agrandissement montre la photo
+affichée et pas un autre cadrage. Les dimensions déclarées sont celles du fichier réellement
+servi, mesurées sur le disque. Une balise sans harmonisée n'est pas touchée.
+
+Si aucune taille déclarée au ratio cible n'est assez large pour l'agrandissement,
+`harmoniser` produit en plus la taille `images_legeres_grande` : le plus grand carré que
+l'original donne **sans agrandir un seul pixel** (le rectangle posé en pixels, ou le plus
+grand côté de l'original en fond ajouté). Les tailles carrées déclarées par WordPress
+(`1536x1536`, `2048x2048`) suffisent dans la plupart des cas, et rien n'est alors produit en
+plus. Après une mise à jour, régénérer :
+
+```
+wp images-legeres harmoniser
+```
+
 ## Réglages
 
 Tous les réglages (qualité WebP, dimension maximale, ratio cible, plage horaire des lots,
