@@ -81,10 +81,24 @@ class ImagesLegeres_Desinstallation {
 	}
 
 	/**
-	 * Frères `.webp` produits par l'extension : ceux dont la source est une ligne de
-	 * `ImagesLegeres_Table`. C'est exactement ce que « Tout rendre » supprime, et ce que
-	 * `wp images-legeres orphelins` doit compter (SEC-4 : un contrôle qui ne voit pas ce qui
-	 * reste est pire que pas de contrôle).
+	 * Frères `.webp` dont l'extension est l'auteur prouvé : ceux dont la source porte une
+	 * ligne `fait` dans `ImagesLegeres_Table`. C'est exactement ce que « Tout rendre »
+	 * supprime, et ce que `wp images-legeres orphelins` doit compter (SEC-4 : un contrôle
+	 * qui ne voit pas ce qui reste est pire que pas de contrôle).
+	 *
+	 * L'inventaire porte UNE LIGNE PAR FICHIER, sous-tailles comprises : chaque fichier de
+	 * `ImagesLegeres_Moteur::fichiers_de_attachment()` est enregistré après sa conversion
+	 * (`ImagesLegeres_Moteur::traiter_attachment()`), et chaque harmonisée l'est après la
+	 * sienne (`ImagesLegeres_Harmonisation::generer()`). La liste couvre donc l'original ET
+	 * chaque sous-taille, comme l'annonce le README — à condition que l'inventaire existe
+	 * encore (voir `lister_freres_webp_tiers()`).
+	 *
+	 * F9c : le filtre sur `fait` est la garde SEC-9, pas un détail. Sans lui, une ligne
+	 * `ignore` — « webp plus lourd que l'original », donc aucun fichier produit par nous —
+	 * suffisait à réclamer le `.webp` qu'un AUTRE outil (EWWW, WebP Express, ShortPixel)
+	 * aurait écrit au même endroit avec un meilleur encodeur, et « Tout rendre » le
+	 * détruisait. Un chemin connu de l'inventaire ne prouve rien ; seul un état `fait`
+	 * prouve que nous avons écrit ce frère-là.
 	 */
 	public static function lister_freres_webp() {
 		$uploads = wp_get_upload_dir();
@@ -92,7 +106,7 @@ class ImagesLegeres_Desinstallation {
 		$freres  = array();
 
 		foreach ( ImagesLegeres_Table::tout() as $ligne ) {
-			if ( empty( $ligne['chemin'] ) ) {
+			if ( empty( $ligne['chemin'] ) || 'fait' !== $ligne['etat'] ) {
 				continue;
 			}
 
@@ -113,9 +127,16 @@ class ImagesLegeres_Desinstallation {
 	}
 
 	/**
-	 * Frères `.webp` présents dans uploads mais inconnus de `ImagesLegeres_Table` : le
-	 * travail d'un autre outil d'optimisation. Listés pour que l'administrateur les voie,
+	 * Frères `.webp` présents dans uploads mais dont l'extension n'est pas l'auteur prouvé :
+	 * le travail d'un autre outil d'optimisation. Listés pour que l'administrateur les voie,
 	 * jamais supprimés (SEC-9).
+	 *
+	 * F9c, cas limite assumé : la désinstallation de niveau 3 (`uninstall.php`) détruit
+	 * l'inventaire et laisse les fichiers. Réinstallée, l'extension ne peut plus prouver
+	 * qu'elle a écrit les `.webp` d'avant, et « Tout rendre » ne les supprime plus — ils
+	 * apparaissent ici. C'est le choix délibéré : mieux vaut un orphelin visible qu'un
+	 * fichier tiers détruit. Les supprimer demanderait de les déduire de leur seul nom, ce
+	 * que SEC-9 interdit.
 	 */
 	public static function lister_freres_webp_tiers() {
 		$connus = self::lister_freres_webp();

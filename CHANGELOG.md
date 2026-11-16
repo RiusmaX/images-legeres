@@ -27,6 +27,18 @@
   les pièces jointes dont au moins une harmonisée n'a pas de frère `.webp` sur le disque.
   Idempotent, compatible `--dry-run`, et refuse une liste d'identifiants puisqu'il choisit
   lui-même.
+- **« Tout rendre » ne supprime que les `.webp` dont l'extension est l'auteur prouvé.**
+  `ImagesLegeres_Desinstallation::lister_freres_webp()` retenait toute ligne de
+  l'inventaire, quel que soit son état. Une ligne `ignore` — « webp plus lourd que
+  l'original », donc aucun fichier écrit par nous — suffisait à réclamer le `.webp` qu'un
+  autre outil (EWWW, WebP Express, ShortPixel) aurait posé au même endroit avec un
+  meilleur encodeur, et « Tout rendre » le détruisait. Seul un état `fait` prouve
+  désormais la propriété ; la garde SEC-9 vaut aussi pour les sous-tailles.
+- `tests/test-activation.sh` joue « Tout rendre » **avant** la désinstallation de
+  niveau 3, et non après. Joué après, il travaillait sans inventaire — détruit par
+  `uninstall.php` — donc sans preuve d'auteur : il ne supprimait plus rien et laissait
+  13 fichiers que le contrôle d'orphelins reclassait en « autre outil ». La suite pose en
+  plus le `.webp` d'un autre outil sur une sous-taille et vérifie qu'il survit.
 - L'image de test `cli` reçoit `imagemagick-webp`. Sans ce codec,
   `setImageFormat('webp')` lève « Unable to set image format » et tout le chemin WebP de
   l'extension ne s'exerçait que sur son chemin d'erreur.

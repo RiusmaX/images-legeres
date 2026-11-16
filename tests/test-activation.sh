@@ -162,22 +162,64 @@ echo implode( ",", $sales );' | tr -d '\r')
 echo "métas de l'extension avant désinstallation : ${METAS_AVANT:-aucune}"
 verifier "les trois métas de l'extension sont posées avant désinstallation" \
   $([[ "$METAS_AVANT" == "_images_legeres_crop,_images_legeres_flux,_images_legeres_meta_origine" ]] && echo 0 || echo 1)
-$WP plugin deactivate images-legeres >/dev/null
+echo "--- un .webp d'un autre outil, posé sur une sous-taille (SEC-9) ---"
+# F9c : la suppression est bornée à ce dont l'extension est l'auteur PROUVÉ, c'est-à-dire
+# une ligne `fait` de son inventaire. Ce témoin porte la convention de double suffixe
+# d'EWWW, de WebP Express et de ShortPixel sur une sous-taille, sans aucune ligne
+# d'inventaire : « Tout rendre » doit le laisser intact et le déclarer.
+TIERS=$($WP eval '
+$u = wp_upload_dir();
+$base = trailingslashit( $u["path"] ) . "autre-outil-" . wp_generate_password( 6, false, false ) . "-300x300.jpg";
+$i = new Imagick(); $i->newImage( 300, 300, new ImagickPixel( "#cc3300" ) ); $i->setImageFormat( "jpeg" );
+$i->writeImage( $base ); $i->clear();
+$w = new Imagick(); $w->newImage( 300, 300, new ImagickPixel( "#cc3300" ) ); $w->setImageFormat( "webp" );
+$w->writeImage( $base . ".webp" ); $w->clear();
+echo $base . ".webp";' | tr -d '\r')
+verifier "témoin d'un autre outil écrit ($TIERS)" $([[ -f "$TIERS" ]] && echo 0 || echo 1)
 
-echo "--- réactivation puis désinstallation (niveau 3) ---"
-# --skip-delete : on isole ici la désinstallation (table/options/métas, gérée par
-# uninstall.php) de la suppression du dossier du plugin, qui est le fait de WordPress
-# (wp-admin « Supprimer ») et hors du périmètre de notre logique.
-$WP plugin activate images-legeres
-$WP plugin deactivate images-legeres
-$WP plugin uninstall images-legeres --skip-delete
-verifier "désinstallation sans erreur WP-CLI" $?
+TIERS_VU=$($WP eval "echo in_array( '$TIERS', ImagesLegeres_Desinstallation::lister_freres_webp_tiers(), true ) ? 'tiers' : 'REVENDIQUE';" | tr -d '\r')
+verifier "le témoin d'un autre outil n'est pas revendiqué par l'inventaire (obtenu $TIERS_VU)" \
+  $([[ "$TIERS_VU" == "tiers" ]] && echo 0 || echo 1)
+
+echo "--- tout rendre, puis contrôle d'orphelins ---"
+# « Tout rendre » est une action de l'écran d'administration, jouée pendant que l'extension
+# est active ET que son inventaire est en place (admin_init exige le plugin chargé) : on la
+# déclenche ici par `wp eval`, qui appelle le même code que le bouton, sans passer par le
+# formulaire HTTP. L'ordre compte : jouée APRÈS une désinstallation de niveau 3, elle n'a
+# plus d'inventaire, donc plus de preuve d'auteur, et ne peut plus rien supprimer.
+
+# L'inventaire doit revendiquer l'original ET ses sous-tailles, pas le seul original : c'est
+# ce que le README promet.
+REVENDIQUES=$($WP eval '
+$freres = ImagesLegeres_Desinstallation::lister_freres_webp();
+$sous_tailles = 0;
+foreach ( $freres as $f ) { if ( preg_match( "#-[0-9]+x[0-9]+\\.(?:jpe?g|png)\\.webp$#i", $f ) ) { $sous_tailles++; } }
+echo count( $freres ) . ":" . $sous_tailles;' | tr -d '\r')
+TOTAL_REVENDIQUES=${REVENDIQUES%%:*}
+SOUS_TAILLES_REVENDIQUEES=${REVENDIQUES##*:}
+echo "frères .webp revendiqués par l'inventaire (total:sous-tailles) : $REVENDIQUES"
+verifier "l'inventaire revendique l'original ET des sous-tailles (obtenu $REVENDIQUES)" \
+  $([[ "${TOTAL_REVENDIQUES:-0}" -ge 2 && "${SOUS_TAILLES_REVENDIQUEES:-0}" -ge 1 ]] && echo 0 || echo 1)
+
+ORPHELINS_AVANT=$($WP images-legeres orphelins --format=json)
+echo "orphelins (extension active, avant tout rendre, attendu non vide) : $ORPHELINS_AVANT"
+
+$WP eval 'ImagesLegeres_Desinstallation::tout_rendre();'
+verifier "tout rendre sans erreur WP-CLI" $?
 
 if $WP db query "SHOW TABLES LIKE '%imageslegeres_fichiers'" | grep -q imageslegeres_fichiers; then
-  verifier "table supprimée après désinstallation" 1
+  verifier "table supprimée après tout rendre" 1
 else
-  verifier "table supprimée après désinstallation" 0
+  verifier "table supprimée après tout rendre" 0
 fi
+
+# SEC-9 : le travail de l'autre outil survit, et lui seul.
+verifier "le .webp d'un autre outil survit à « Tout rendre » (SEC-9)" $([[ -f "$TIERS" ]] && echo 0 || echo 1)
+
+RESTANTS=$($WP eval 'echo implode( ",", ImagesLegeres_Desinstallation::lister_tous_freres_webp() );' | tr -d '\r')
+echo "frères .webp restants après tout rendre : ${RESTANTS:-aucun}"
+verifier "aucun frère .webp de l'extension ne survit, original comme sous-tailles (restants : ${RESTANTS:-aucun})" \
+  $([[ "$RESTANTS" == "$TIERS" ]] && echo 0 || echo 1)
 
 # Le balayage porte sur TOUTES les clés de postméta, pas sur la liste METAS : c'est le seul
 # moyen d'attraper une clé que l'extension écrit mais que METAS a oubliée (réserve « Pour
@@ -211,34 +253,18 @@ foreach ( (array) \$lignes as \$l ) { \$vus[] = \$l->meta_key; }
 echo count( \$vus ) . ' : ' . implode( ',', array_unique( \$vus ) );" | tr -d '\r')
 echo "motif naif LIKE pourcent-images-underscore-legeres-pourcent, cle OU valeur, apres desinstallation : $NAIF"
 
-echo "--- contrôle des drop-ins ---"
-if [[ -f /var/www/html/wp-content/object-cache.php || -f /var/www/html/wp-content/advanced-cache.php ]]; then
-  verifier "aucun drop-in posé" 1
-else
-  verifier "aucun drop-in posé" 0
-fi
-
-echo "--- tout rendre, puis contrôle d'orphelins ---"
-# « Tout rendre » est une action de l'écran d'administration, jouée pendant que l'extension
-# est active (admin_init exige le plugin chargé) : on la déclenche ici par `wp eval`, qui
-# appelle le même code que le bouton, sans passer par le formulaire HTTP.
-$WP plugin activate images-legeres
-ORPHELINS_AVANT=$($WP images-legeres orphelins --format=json)
-echo "orphelins (extension active, avant tout rendre, attendu non vide) : $ORPHELINS_AVANT"
-
-$WP eval 'ImagesLegeres_Desinstallation::tout_rendre();'
-verifier "tout rendre sans erreur WP-CLI" $?
-
-if $WP db query "SHOW TABLES LIKE '%imageslegeres_fichiers'" | grep -q imageslegeres_fichiers; then
-  verifier "table supprimée après tout rendre" 1
-else
-  verifier "table supprimée après tout rendre" 0
-fi
-
 # tout_rendre() appelle desinstaller() mais ne désactive pas le plugin : son code reste
 # chargé, la commande orphelins reste donc disponible pour prouver l'état final.
+ORPHELINS_TIERS=$($WP images-legeres orphelins --format=json)
+echo "orphelins (après tout rendre, le témoin tiers encore en place) : $ORPHELINS_TIERS"
+verifier "le témoin tiers est déclaré à l'administrateur, pas supprimé" \
+  $(echo "$ORPHELINS_TIERS" | grep -q 'autre outil' && echo 0 || echo 1)
+
+# Le témoin retiré — il appartient à l'autre outil, c'est à nous de nettoyer notre décor —
+# il ne doit plus rien rester du tout.
+rm -f "$TIERS" "${TIERS%.webp}"
 ORPHELINS_APRES=$($WP images-legeres orphelins --format=json)
-echo "orphelins (après tout rendre, attendu []) : $ORPHELINS_APRES"
+echo "orphelins (après tout rendre, décor tiers retiré, attendu []) : $ORPHELINS_APRES"
 if [[ "$ORPHELINS_APRES" == "[]" ]]; then
   verifier "wp images-legeres orphelins rend une liste vide" 0
 else
@@ -246,6 +272,33 @@ else
 fi
 
 $WP plugin deactivate images-legeres
+
+echo "--- contrôle des drop-ins ---"
+if [[ -f /var/www/html/wp-content/object-cache.php || -f /var/www/html/wp-content/advanced-cache.php ]]; then
+  verifier "aucun drop-in posé" 1
+else
+  verifier "aucun drop-in posé" 0
+fi
+
+echo "--- réactivation puis désinstallation (niveau 3) ---"
+# Joué APRÈS « Tout rendre » : ce bloc prouve que `wp plugin uninstall` charge ses
+# classes et retire la table sans erreur fatale (F5), sur un site déjà rendu. Le
+# contrôle des postmétas, lui, a été joué plus haut, là où il y avait des métas à
+# retirer.
+# --skip-delete : on isole ici la désinstallation (table/options/métas, gérée par
+# uninstall.php) de la suppression du dossier du plugin, qui est le fait de WordPress
+# (wp-admin « Supprimer ») et hors du périmètre de notre logique.
+$WP plugin activate images-legeres
+$WP plugin deactivate images-legeres
+$WP plugin uninstall images-legeres --skip-delete
+verifier "désinstallation sans erreur WP-CLI" $?
+
+if $WP db query "SHOW TABLES LIKE '%imageslegeres_fichiers'" | grep -q imageslegeres_fichiers; then
+  verifier "table supprimée après désinstallation" 1
+else
+  verifier "table supprimée après désinstallation" 0
+fi
+
 
 echo "--- journal PHP ---"
 if [[ -s /var/www/html/wp-content/debug.log ]] && grep -i "images-legeres\|imageslegeres\|ImagesLegeres" /var/www/html/wp-content/debug.log; then
