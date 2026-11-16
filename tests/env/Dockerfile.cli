@@ -8,8 +8,13 @@
 # Le PNG, lui, est servi par le cœur d'ImageMagick : il n'a pas de paquet séparé.
 # `Imagick::queryFormats()` rend une liste vide dans cette image, avant comme après : ne
 # pas s'en servir comme sonde, écrire puis relire un JPEG est la seule preuve qui vaut.
+#
+# F9 (2026-11-16) : le codec WebP manquait au même titre. Sans lui, `setImageFormat('webp')`
+# lève « Unable to set image format » et TOUT le chemin WebP de l'extension — conversion des
+# sous-tailles, frère .webp des harmonisées, rattrapage — ne s'exerçait ici que sur son
+# chemin d'erreur, exactement comme le JPEG avant CE-1.
 FROM wordpress:cli-php8.4
 
 USER root
-RUN apk add --no-cache imagemagick-jpeg
+RUN apk add --no-cache imagemagick-jpeg imagemagick-webp
 USER 33:33

@@ -43,6 +43,33 @@ class ImagesLegeres_Harmonisation {
 	 */
 	const TAILLE_GRANDE = 'images_legeres_grande';
 
+	/**
+	 * Côté maximal de la grande image servie au zoom et à la visionneuse.
+	 *
+	 * F8 prenait LA plus grande harmonisée, donc le `2048x2048` de WordPress : 841 Ko de
+	 * JPEG (837 Ko de WebP) pour une visionneuse qui, sur un téléphone, n'affiche jamais
+	 * plus de 1 536 px de côté. Le `1536x1536` de la même photo pèse 577 Ko — et 417 Ko une
+	 * fois les profils retirés. Au-delà de 1 536 px l'octet supplémentaire ne se voit nulle
+	 * part ; en deçà, l'agrandissement perdrait en définition.
+	 */
+	const COTE_GRANDE_MAX = 1536;
+
+	/**
+	 * Qualité d'encodage des fichiers harmonisés — JPEG **et** frère .webp.
+	 *
+	 * Les deux doivent sortir de la MÊME valeur, et c'est tout le défaut que cette fiche
+	 * corrige (F9) : le JPEG était écrit à 82 (`jpeg_quality`) et son frère .webp à
+	 * `qualite_webp_produit`, dont la valeur par défaut est 90. Un WebP de qualité 90 tiré
+	 * d'un JPEG de qualité 82 est 4 à 5 % PLUS LOURD que lui (mesuré sur les harmonisées de
+	 * production, 2026-11-16) : `ImagesLegeres_Moteur::convertir_vers_webp` le refusait
+	 * alors comme « webp plus lourd que l'original » et le supprimait. 40 harmonisées de
+	 * monkobougie.fr sont restées sans frère .webp pour cette seule raison. À 82 des deux
+	 * côtés, le même WebP est 21 à 28 % plus léger que son JPEG.
+	 */
+	public static function qualite() {
+		return (int) apply_filters( 'jpeg_quality', 82, 'image_resize' );
+	}
+
 	/** Reconnaît un fichier produit par l'extension à son seul nom. */
 	public static function est_fichier_harmonise( $chemin ) {
 		return (bool) preg_match( '#' . preg_quote( self::SUFFIXE, '#' ) . '\d+x\d+\.[a-z]+$#i', (string) $chemin );
@@ -231,7 +258,7 @@ class ImagesLegeres_Harmonisation {
 			// Le frère .webp de l'harmonisée passe par le moteur : même seuil, même trace
 			// dans ImagesLegeres_Table, donc vu par « Tout rendre » et par `orphelins`.
 			if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) ) {
-				$webp = ImagesLegeres_Moteur::convertir_vers_webp( $destination, (int) ImagesLegeres_Reglages::valeur( 'qualite_webp_produit' ) );
+				$webp = ImagesLegeres_Moteur::convertir_vers_webp( $destination, self::qualite() );
 				ImagesLegeres_Table::enregistrer(
 					array(
 						'chemin'        => ImagesLegeres_Moteur::chemin_relatif( $destination ),
@@ -257,6 +284,44 @@ class ImagesLegeres_Harmonisation {
 	}
 
 	/**
+	 * Pièces jointes dont AU MOINS une harmonisée inventoriée n'a pas de frère .webp sur le
+	 * disque — le rattrapage de `--webp-manquants`.
+	 *
+	 * Pourquoi par pièce jointe et pas fichier par fichier : le frère .webp se fabrique
+	 * depuis l'harmonisée, et l'harmonisée elle-même doit être réécrite (profils retirés,
+	 * qualité alignée). Régénérer la pièce jointe entière par `generer()` est la seule voie
+	 * qui laisse l'inventaire, le poids enregistré et la trace de `ImagesLegeres_Table`
+	 * cohérents entre eux.
+	 *
+	 * Idempotente : une fois le rattrapage passé, plus aucune harmonisée n'est sans frère,
+	 * la liste est vide et un second appel ne réécrit rien.
+	 *
+	 * @return int[] Identifiants de pièces jointes, triés.
+	 */
+	public static function ids_webp_manquant() {
+		$uploads = wp_get_upload_dir();
+		$base    = trailingslashit( $uploads['basedir'] );
+		$ids     = array();
+
+		foreach ( ImagesLegeres_Harmonisees::tout() as $ligne ) {
+			$harmonisee = $base . $ligne['chemin_harmonise'];
+
+			// Une ligne dont le fichier a disparu n'est pas un « webp manquant » : c'est un
+			// trou d'inventaire, que `harmoniser` sans option traite déjà.
+			if ( ! file_exists( $harmonisee ) || file_exists( $harmonisee . '.webp' ) ) {
+				continue;
+			}
+
+			$ids[ (int) $ligne['attachment_id'] ] = true;
+		}
+
+		$ids = array_keys( $ids );
+		sort( $ids );
+
+		return $ids;
+	}
+
+	/**
 	 * Écrit un fichier harmonisé depuis l'original, par recadrage si un rectangle est posé,
 	 * par fond ajouté sinon (ADR 0005 point 4). Écriture atomique. Rend '' si tout va bien,
 	 * le motif d'erreur sinon.
@@ -277,10 +342,18 @@ class ImagesLegeres_Harmonisation {
 			// sans ce réglage, Imagick reprend celle de la source (92 et plus sur une photo
 			// de téléphone) et l'harmonisée pèse trois fois le fichier qu'elle remplace —
 			// c'est le `-1024x1024.jpg` de 258 Ko relevé en production le 2026-11-15.
+			// Profils retirés comme le fait WordPress pour ses propres sous-tailles, le
+			// profil couleur excepté : sans ce retrait, l'harmonisée traîne l'EXIF complet
+			// du téléphone (app1 53 653 o, app11 6 479 o, exif 26 171 o, xmp 1 034 o =
+			// 81 501 o mesurés sur une photo Pixel de production). Un carré de 50 px pesait
+			// 88 802 octets pour 818 octets d'image, et ces 81 Ko incompressibles
+			// repartaient tels quels dans le frère .webp.
+			ImagesLegeres_Compat::retirer_profils( $image );
+
 			$image->setImageFormat( strtolower( pathinfo( $original, PATHINFO_EXTENSION ) ) === 'png' ? 'png' : 'jpeg' );
 
 			if ( 'PNG' !== strtoupper( $image->getImageFormat() ) ) {
-				$image->setImageCompressionQuality( (int) apply_filters( 'jpeg_quality', 82, 'image_resize' ) );
+				$image->setImageCompressionQuality( self::qualite() );
 			}
 
 			$tmp = $destination . '.tmp-' . wp_generate_password( 8, false, false );

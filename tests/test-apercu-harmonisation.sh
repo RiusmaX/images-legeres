@@ -410,14 +410,27 @@ verifier "galerie : le href du lien parent pointe la même adresse" \
 verifier "galerie : dimensions déclarées égales aux dimensions réelles du fichier servi (déclaré $G_DECLARE, réel $G_REEL)" \
   $([[ -n "$G_REEL" && "$G_REEL" != "illisible" && "$G_DECLARE" == "$G_REEL" ]] && echo 0 || echo 1)
 
-# Le zoom ne doit pas être servi plus petit que la photo affichée : la grande harmonisée
-# est la plus large de la pièce jointe.
+# Le zoom ne doit être servi ni plus petit que la photo affichée, ni plus grand que ce
+# qu'une visionneuse montre : la grande harmonisée est la plus large de la pièce jointe
+# QUI NE DÉPASSE PAS le plafond (F9). F8 prenait LA plus large, donc le `2048x2048` de
+# WordPress — 841 Ko pour un écran qui n'affiche jamais plus de 1 536 px de côté.
+PLAFOND=$(wp eval "echo (int) ImagesLegeres_Harmonisation::COTE_GRANDE_MAX;" | tr -d '\r')
 PLUS_LARGE=$(wp eval "
 \$max = 0;
 foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) as \$l ) { \$max = max( \$max, (int) \$l['largeur'] ); }
 echo \$max;" | tr -d '\r')
-verifier "galerie : le zoom reçoit la plus grande harmonisée de la pièce jointe (${PLUS_LARGE}px)" \
-  $([[ "$G_DECLARE" == "${PLUS_LARGE}x"* ]] && echo 0 || echo 1)
+PLUS_LARGE_SOUS_PLAFOND=$(wp eval "
+\$plafond = (int) ImagesLegeres_Harmonisation::COTE_GRANDE_MAX;
+\$max     = 0;
+foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) as \$l ) {
+  \$largeur = (int) \$l['largeur'];
+  if ( \$largeur <= \$plafond ) { \$max = max( \$max, \$largeur ); }
+}
+echo \$max;" | tr -d '\r')
+verifier "galerie : le zoom reçoit la plus grande harmonisée SOUS le plafond (${PLUS_LARGE_SOUS_PLAFOND}px, plus large de la pièce jointe ${PLUS_LARGE}px)" \
+  $([[ "$PLUS_LARGE_SOUS_PLAFOND" -gt 0 && "$G_DECLARE" == "${PLUS_LARGE_SOUS_PLAFOND}x"* ]] && echo 0 || echo 1)
+verifier "galerie : la grande servie ne dépasse pas le plafond (${G_DECLARE%%x*}px <= ${PLAFOND}px)" \
+  $([[ "$PLAFOND" -gt 0 && "${G_DECLARE%%x*}" -le "$PLAFOND" ]] && echo 0 || echo 1)
 
 echo "--- une grande harmonisée existe toujours pour le zoom ---"
 # Le zoom ne doit JAMAIS être servi en moins bonne définition que l'original qu'il

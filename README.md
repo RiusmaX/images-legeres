@@ -4,7 +4,7 @@ Extension WordPress qui convertit les images en WebP, retaille les originaux sur
 harmonise les photos produit WooCommerce au ratio cible et sert la même photo aux flux
 Google et Meta. Aucune dépendance réseau, aucune clé, aucun appel à un service externe.
 
-**Version 0.2.0.** Requiert WordPress 6.0 et PHP 8.1.
+**Version 0.2.2.** Requiert WordPress 6.0 et PHP 8.1.
 
 ## Installation
 
@@ -56,14 +56,30 @@ Trois conséquences voulues :
 L'encodage JPEG suit `jpeg_quality` au lieu d'hériter de la qualité de la source : c'est ce
 qui faisait peser 258 Ko à une vignette de 1024 px en production.
 
+**Le JPEG harmonisé et son frère `.webp` sortent de la même qualité**
+(`ImagesLegeres_Harmonisation::qualite()`). Les encoder séparément — 82 pour le JPEG,
+`qualite_webp_produit` pour le WebP — produisait un WebP 4 à 5 % plus lourd que son JPEG,
+donc refusé et supprimé comme « webp plus lourd que l'original ». À qualité égale, le WebP
+est 21 à 28 % plus léger. Les profils EXIF et XMP de l'original ne sont plus recopiés dans
+chaque harmonisée (environ 81 Ko par fichier) ; **le profil couleur ICC est conservé**.
+
 ### Zoom et visionneuse de la fiche produit
 
 La galerie de WooCommerce n'agrandit pas le `src` : jQuery Zoom lit `data-src`, PhotoSwipe
 lit `data-large_image` et ses dimensions déclarées, et retombe sur le `href` du lien parent.
 Quand une balise de galerie est harmonisée, la réécriture aligne ces quatre valeurs sur la
-**plus grande harmonisée de la pièce jointe**, pour que l'agrandissement montre la photo
-affichée et pas un autre cadrage. Les dimensions déclarées sont celles du fichier réellement
-servi, mesurées sur le disque. Une balise sans harmonisée n'est pas touchée.
+**plus grande harmonisée de la pièce jointe qui ne dépasse pas 1 536 px de côté**, pour que
+l'agrandissement montre la photo affichée et pas un autre cadrage. Les dimensions déclarées
+sont celles du fichier réellement servi, mesurées sur le disque. Une balise sans harmonisée
+n'est pas touchée.
+
+**Le plafond de 1 536 px** (`ImagesLegeres_Harmonisation::COTE_GRANDE_MAX`) évite de servir
+le `2048x2048` de WordPress — 841 Ko — à une visionneuse qui, sur un téléphone, n'affiche
+jamais plus de 1 536 px de côté : le `1536x1536` de la même photo pèse 577 Ko, et 417 Ko une
+fois les profils retirés. Au-delà, l'octet supplémentaire ne se voit nulle part ; en deçà,
+l'agrandissement perdrait en définition. Si la pièce jointe n'a aucune harmonisée sous le
+plafond, la plus petite au-dessus est gardée — mieux vaut une grande trop grande que le
+rectangle natif, qui est un autre cadrage que la photo affichée.
 
 Si aucune taille déclarée au ratio cible n'est assez large pour l'agrandissement,
 `harmoniser` produit en plus la taille `images_legeres_grande` : le plus grand carré que
@@ -130,7 +146,7 @@ wp images-legeres orphelins [--format=table|json|csv|yaml]
 wp images-legeres convert <id> [--dry-run]
 wp images-legeres run [--limite=<n>] [--forcer] [--format=table|json|yaml]
 wp images-legeres qualite <id>... [--qualite=<n>] [--format=table|json|yaml|csv]
-wp images-legeres harmoniser [<id>...] [--dry-run]
+wp images-legeres harmoniser [<id>...] [--webp-manquants] [--dry-run]
 ```
 
 `orphelins` liste ce qui resterait de l'extension après une désinstallation (table, options,
@@ -141,6 +157,17 @@ refuse de tourner hors plage horaire sauf `--forcer`.
 `harmoniser` produit les sous-tailles au ratio cible ; sans identifiant, il prend les images
 produit cadrées (rectangle posé ou fond assumé). `--dry-run` annonce ce qui serait écrit
 sans rien écrire.
+
+`--webp-manquants` est le **rattrapage** : il ne traite que les pièces jointes dont au moins
+une harmonisée n'a pas de frère `.webp` sur le disque. C'est la commande à passer après une
+mise à jour sur un site où des harmonisées ont été écrites sans leur WebP (cf. 0.2.2). Elle
+est idempotente — une fois passée, elle annonce « rien à rattraper » — accepte `--dry-run`,
+et refuse une liste d'identifiants puisqu'elle choisit elle-même les pièces jointes :
+
+```
+wp images-legeres harmoniser --webp-manquants --dry-run
+wp images-legeres harmoniser --webp-manquants
+```
 
 ### Mesurer la perte : `qualite`
 

@@ -203,6 +203,11 @@ class ImagesLegeres_Cli {
 	 * : Identifiants de pièces jointes. Sans argument : toutes les images produit cadrées
 	 * (rectangle posé ou fond assumé).
 	 *
+	 * [--webp-manquants]
+	 * : Rattrapage : ne traite que les pièces jointes dont au moins une harmonisée n'a pas
+	 * de frère .webp sur le disque. Idempotent — une fois passé, la liste est vide.
+	 * Incompatible avec une liste d'identifiants.
+	 *
 	 * [--dry-run]
 	 * : N'écrit rien, liste ce qui serait produit.
 	 *
@@ -223,8 +228,26 @@ class ImagesLegeres_Cli {
 			WP_CLI::error( 'harmonisation produit désactivée : rien à produire.' );
 		}
 
-		$dry_run = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'dry-run', false );
-		$ids     = $args ? array_map( 'intval', $args ) : ImagesLegeres_Harmonisation::ids_a_harmoniser();
+		$dry_run    = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'dry-run', false );
+		$rattrapage = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'webp-manquants', false );
+
+		if ( $rattrapage && $args ) {
+			WP_CLI::error( '--webp-manquants choisit lui-même les pièces jointes : ne lui en passe pas.' );
+		}
+
+		if ( $rattrapage ) {
+			$ids = ImagesLegeres_Harmonisation::ids_webp_manquant();
+
+			if ( empty( $ids ) ) {
+				WP_CLI::success( 'aucune harmonisée sans frère .webp : rien à rattraper.' );
+
+				return;
+			}
+
+			WP_CLI::log( sprintf( 'rattrapage : %d pièce(s) jointe(s) avec au moins une harmonisée sans frère .webp.', count( $ids ) ) );
+		} else {
+			$ids = $args ? array_map( 'intval', $args ) : ImagesLegeres_Harmonisation::ids_a_harmoniser();
+		}
 
 		if ( empty( $ids ) ) {
 			WP_CLI::warning( 'aucune image produit cadrée : rien à produire.' );

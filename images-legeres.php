@@ -3,7 +3,7 @@
  * Plugin Name:       Images légères
  * Plugin URI:        https://github.com/RiusmaX/images-legeres
  * Description:       Convertit les images en WebP, retaille les originaux surdimensionnés, harmonise les photos produit WooCommerce et sert la même photo aux flux Google et Meta — sans dépendance réseau ni clé.
- * Version:           0.2.1
+ * Version:           0.2.2
  * Requires at least: 6.0
  * Requires PHP:      8.1
  * Author:            Marius Sergent
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'IMAGES_LEGERES_VERSION', '0.2.1' );
+define( 'IMAGES_LEGERES_VERSION', '0.2.2' );
 define( 'IMAGES_LEGERES_DIR', plugin_dir_path( __FILE__ ) );
 define( 'IMAGES_LEGERES_URL', plugin_dir_url( __FILE__ ) );
 define( 'IMAGES_LEGERES_BASENAME', plugin_basename( __FILE__ ) );

@@ -190,6 +190,15 @@ class ImagesLegeres_Harmonisees {
 	 * ni `srcset` ni adresse de grande taille, et le zoom se retrouverait servi plus petit
 	 * que l'original qu'il remplace.
 	 *
+	 * Plafonnée à `ImagesLegeres_Harmonisation::COTE_GRANDE_MAX` (F9) : on prend la plus
+	 * grande harmonisée QUI NE DÉPASSE PAS ce côté. Sur monkobougie.fr, F8 servait le
+	 * `2048x2048` (841 Ko) à une visionneuse de téléphone qui n'en montre jamais plus de
+	 * 1 536 px ; le `1536x1536` de la même photo pèse 577 Ko, soit 264 Ko de moins par
+	 * diapositive agrandie. Si l'attachement n'a AUCUNE harmonisée sous le plafond, on
+	 * garde la plus petite dont il dispose : mieux vaut une grande trop grande que pas de
+	 * grande du tout — le zoom retomberait sur le rectangle natif, c'est-à-dire sur un
+	 * autre cadrage que la photo affichée.
+	 *
 	 * @return array attachment_id => array( chemin, largeur, hauteur )
 	 */
 	public static function plus_grandes_par_attachment( array $ids ) {
@@ -208,21 +217,42 @@ class ImagesLegeres_Harmonisees {
 			ARRAY_A
 		);
 
-		$plus_grandes = array();
+		$plafond      = (int) ImagesLegeres_Harmonisation::COTE_GRANDE_MAX;
+		$sous_plafond = array();
+		$au_dessus    = array();
 
 		foreach ( (array) $lignes as $ligne ) {
-			$id = (int) $ligne['attachment_id'];
+			$id      = (int) $ligne['attachment_id'];
+			$largeur = (int) $ligne['largeur'];
 
-			if ( isset( $plus_grandes[ $id ] ) && $plus_grandes[ $id ]['largeur'] >= (int) $ligne['largeur'] ) {
+			$candidate = array(
+				'attachment' => $id,
+				'chemin'     => $ligne['chemin_harmonise'],
+				'largeur'    => $largeur,
+				'hauteur'    => (int) $ligne['hauteur'],
+			);
+
+			if ( $largeur <= $plafond ) {
+				// Sous le plafond : la plus GRANDE gagne.
+				if ( ! isset( $sous_plafond[ $id ] ) || $sous_plafond[ $id ]['largeur'] < $largeur ) {
+					$sous_plafond[ $id ] = $candidate;
+				}
+
 				continue;
 			}
 
-			$plus_grandes[ $id ] = array(
-				'attachment' => $id,
-				'chemin'     => $ligne['chemin_harmonise'],
-				'largeur'    => (int) $ligne['largeur'],
-				'hauteur'    => (int) $ligne['hauteur'],
-			);
+			// Au-dessus du plafond : ne sert que de repli, donc la plus PETITE gagne.
+			if ( ! isset( $au_dessus[ $id ] ) || $au_dessus[ $id ]['largeur'] > $largeur ) {
+				$au_dessus[ $id ] = $candidate;
+			}
+		}
+
+		$plus_grandes = $sous_plafond;
+
+		foreach ( $au_dessus as $id => $candidate ) {
+			if ( ! isset( $plus_grandes[ $id ] ) ) {
+				$plus_grandes[ $id ] = $candidate;
+			}
 		}
 
 		return $plus_grandes;

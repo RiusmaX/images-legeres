@@ -104,6 +104,49 @@ class ImagesLegeres_Compat {
 	}
 
 	/**
+	 * Retire les profils et métadonnées embarqués, SAUF le profil couleur (ICC).
+	 *
+	 * C'est le geste que `WP_Image_Editor_Imagick::strip_meta()` fait sur chaque sous-taille
+	 * native : jeter l'EXIF, l'XMP et les blocs applicatifs du constructeur, garder l'ICC
+	 * pour que les couleurs ne dérivent pas. `Imagick::stripImage()` jette TOUT, ICC compris ;
+	 * on relit donc l'ICC avant, et on le repose après.
+	 *
+	 * Sans repli muet : si `stripImage()` échoue, l'image sort telle quelle — plus lourde,
+	 * mais juste — et l'appelant en est informé par le retour.
+	 *
+	 * @param Imagick $image Image à alléger (modifiée sur place).
+	 * @return bool true si les profils ont été retirés.
+	 */
+	public static function retirer_profils( Imagick $image ) {
+		$icc = '';
+
+		try {
+			$profils = $image->getImageProfiles( 'icc', true );
+			$icc     = isset( $profils['icc'] ) ? (string) $profils['icc'] : '';
+		} catch ( Throwable $erreur ) {
+			unset( $erreur );
+		}
+
+		try {
+			$image->stripImage();
+		} catch ( Throwable $erreur ) {
+			unset( $erreur );
+
+			return false;
+		}
+
+		if ( '' !== $icc ) {
+			try {
+				$image->profileImage( 'icc', $icc );
+			} catch ( Throwable $erreur ) {
+				unset( $erreur );
+			}
+		}
+
+		return true;
+	}
+
+	/**
 	 * Retire le canal alpha d'une image, quelle que soit la version d'ImageMagick.
 	 *
 	 * Essaie les constantes de `ALPHA_PAR_ORDRE` ; si aucune n'existe — ou si toutes
