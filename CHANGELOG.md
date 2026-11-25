@@ -2,6 +2,12 @@
 
 ## 0.2.3
 
+- **Plus aucune réécriture dans l'éditeur ni dans les aperçus.** L'éditeur visuel Divi
+  recevait des adresses en `.webp`, et un enregistrement les écrivait dans le contenu. Ni
+  WebP ni harmonisée sur `et_fb`, `app_window`, `et_pb_preview`, `et_pb_preview_nonce`,
+  `et_tb`, l'aperçu WordPress ou de l'outil de personnalisation, l'administration, AJAX,
+  REST et les requêtes JSON. La page publique est réécrite comme avant. Un contenu déjà
+  enregistré avec ces adresses n'est pas corrigé par la mise à jour.
 - **Les nouvelles images sont traitées toutes seules.** Une image mise en file par un envoi ou
   un changement de sous-tailles restait « à faire » tant que personne ne lançait le lot. Une
   action de fond dédiée la convertit désormais en quelques minutes, hors plage horaire, avec
