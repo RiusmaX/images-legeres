@@ -310,14 +310,14 @@ class ImagesLegeres_Lot {
 		}
 
 		if ( $a_une_erreur ) {
-			return array( 'erreur', implode( ' ; ', $motifs ) );
+			return array( 'erreur', implode( ' ; ', array_unique( $motifs ) ) );
 		}
 
 		if ( $a_un_fait ) {
-			return array( 'fait', implode( ' ; ', $motifs ) );
+			return array( 'fait', implode( ' ; ', array_unique( $motifs ) ) );
 		}
 
-		return array( 'ignore', implode( ' ; ', $motifs ) );
+		return array( 'ignore', implode( ' ; ', array_unique( $motifs ) ) );
 	}
 
 	/**

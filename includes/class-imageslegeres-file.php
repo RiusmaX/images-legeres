@@ -245,15 +245,28 @@ class ImagesLegeres_File {
 	public static function marquer_resultat( $attachment_id, $etat, $motif = '' ) {
 		global $wpdb;
 
-		$wpdb->update(
+		$ecrit = $wpdb->update(
 			self::nom(),
 			array(
 				'etat'  => $etat,
-				'motif' => (string) $motif,
+				// La colonne fait 500 caractères : au-delà, wpdb refuse toute l'écriture.
+				'motif' => mb_substr( (string) $motif, 0, 500 ),
 				'maj'   => current_time( 'mysql', true ),
 			),
 			array( 'attachment_id' => (int) $attachment_id )
 		);
+
+		// 0 ligne modifiée n'est pas un échec : seul false l'est.
+		if ( false === $ecrit ) {
+			ImagesLegeres_Journal::ecrire(
+				(string) get_attached_file( (int) $attachment_id ),
+				'erreur',
+				0,
+				0,
+				0,
+				"résultat « {$etat} » non écrit dans la file (pièce jointe {$attachment_id}) : {$wpdb->last_error}"
+			);
+		}
 	}
 
 	public static function ligne( $attachment_id ) {

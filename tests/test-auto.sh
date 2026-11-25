@@ -131,6 +131,26 @@ egal "une seule action en attente" "1" "$(en_attente)"
 attendre "$DIRECTE"; verifier "traitée" $?
 egal "carrée + WebP" "oui" "$(carrees_webp "$DIRECTE")"
 
+echo "--- 4 bis. 16 fichiers ou plus : le second passage s'écrit malgré le cumul des motifs ---"
+docker compose -f compose.yml exec -T wordpress sh -c 'cat > /var/www/html/wp-content/mu-plugins/il-test-tailles.php' <<'PHP'
+<?php
+add_action( 'init', static function () { for ( $i = 1; $i <= 14; $i++ ) { add_image_size( "il_test_$i", 100 + 20 * $i, 0 ); } } );
+PHP
+NOMBREUSE=$(envoyer nombreuse)
+attendre "$NOMBREUSE"; verifier "premier passage terminé" $?
+NB=$(php_wp "echo count( ImagesLegeres_Moteur::fichiers_de_attachment($NOMBREUSE) );")
+verifier "au moins 16 fichiers (obtenu : $NB)" $([[ "$NB" -ge 16 ]] && echo 0 || echo 1)
+php_wp "\$p = wc_get_product($PRODUIT); \$p->set_image_id($NOMBREUSE); \$p->save();"
+egal "remise en file à la pose" "a-faire" "$(etat "$NOMBREUSE")"
+attendre "$NOMBREUSE"; verifier "second passage terminé « fait »" $?
+egal "carrée + WebP" "oui" "$(carrees_webp "$NOMBREUSE")"
+egal "motif d'au plus 500 caractères" "oui" "$(php_wp "echo mb_strlen( ImagesLegeres_File::ligne($NOMBREUSE)['motif'] ) <= 500 ? 'oui' : 'non';")"
+egal "aucune ligne en erreur ni abandonnée" "0" "$(php_wp "global \$wpdb; echo \$wpdb->get_var( 'SELECT COUNT(*) FROM ' . ImagesLegeres_File::nom() . \" WHERE etat = 'erreur' OR motif LIKE 'abandon%'\" );")"
+egal "motif trop long : tronqué à 500 caractères et écrit" "500 fait" "$(php_wp "ImagesLegeres_File::marquer_resultat($NOMBREUSE, 'fait', str_repeat('é', 800)); \$l = ImagesLegeres_File::ligne($NOMBREUSE); echo mb_strlen(\$l['motif']) . ' ' . \$l['etat'];")"
+php_wp "ImagesLegeres_File::marquer_resultat($NOMBREUSE, str_repeat('x', 40), '');" >/dev/null 2>&1
+egal "écriture refusée : journalisée" "oui" "$(php_wp "echo false !== strpos( implode( '', ImagesLegeres_Journal::dernieres_lignes() ), 'non écrit dans la file (pièce jointe $NOMBREUSE)' ) ? 'oui' : 'non';")"
+docker compose -f compose.yml exec -T wordpress rm /var/www/html/wp-content/mu-plugins/il-test-tailles.php
+
 echo "--- 5. charge trop élevée : replanifié, pas traité, pas de double planification ---"
 php_wp '$r = ImagesLegeres_Reglages::tout(); $r["charge_max_serveur"] = 0.0001; ImagesLegeres_Reglages::enregistrer($r);'
 CHARGE=$(envoyer charge)
