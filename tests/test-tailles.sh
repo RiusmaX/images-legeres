@@ -27,7 +27,7 @@ wp option update woocommerce_single_image_width 1024 >/dev/null
 wp option update woocommerce_thumbnail_image_width 300 >/dev/null
 wp option update woocommerce_thumbnail_cropping 1:1 >/dev/null
 
-for e in substitution migration-semer migration-verifier suppression; do
+for e in substitution migration-semer migration-verifier suppression ordre; do
   echo "--- $e ---"
   etape "$e"
 done

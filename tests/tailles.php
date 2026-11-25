@@ -243,4 +243,19 @@ if ( 'suppression' === $etape ) {
 	verifier( 'Tout rendre : aucun autre fichier touché', fichiers( false ) === $natifs, (string) count( $natifs ) );
 }
 
+if ( 'ordre' === $etape ) {
+	// Un natif avec plusieurs carrés : la génération la plus récente, puis le plus grand.
+	$ajouter = function ( $taille, $natif, $carre, $cote, $maj ) {
+		ImagesLegeres_Harmonisees::enregistrer( array( 'attachment_id' => 999999, 'taille' => $taille, 'chemin_natif' => $natif, 'chemin_harmonise' => $carre, 'largeur' => $cote, 'hauteur' => $cote, 'maj' => $maj ) );
+	};
+	$ajouter( 'a', 'ordre/r.jpg', 'ordre/ancien-grand.jpg', 1536, '2026-01-01 00:00:00' );
+	$ajouter( 'b', 'ordre/r.jpg', 'ordre/recent-petit.jpg', 600, '2026-02-01 00:00:00' );
+	$ajouter( 'c', 'ordre/g.jpg', 'ordre/grand.jpg', 1024, '2026-02-01 00:00:00' );
+	$ajouter( 'd', 'ordre/g.jpg', 'ordre/petit.jpg', 300, '2026-02-01 00:00:00' );
+	$map = ImagesLegeres_Harmonisees::map_pour_chemins( array( 'ordre/r.jpg', 'ordre/g.jpg' ) );
+	verifier( 'plusieurs carrés : la génération la plus récente l\'emporte', 'ordre/recent-petit.jpg' === $map['ordre/r.jpg']['chemin'], $map['ordre/r.jpg']['chemin'] );
+	verifier( 'même génération : le plus grand carré l\'emporte', 'ordre/grand.jpg' === $map['ordre/g.jpg']['chemin'], $map['ordre/g.jpg']['chemin'] );
+	$wpdb->delete( ImagesLegeres_Harmonisees::nom(), array( 'attachment_id' => 999999 ) );
+}
+
 echo "FIN $etape\n";
