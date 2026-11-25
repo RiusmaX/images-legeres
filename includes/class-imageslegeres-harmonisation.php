@@ -153,6 +153,78 @@ class ImagesLegeres_Harmonisation {
 		return $largeur > $plus_grande_declaree ? array( $largeur, $hauteur ) : null;
 	}
 
+	/** Tailles à produire pour un original donné, carré « grand » compris. */
+	private static function tailles_pour( $original, $rectangle ) {
+		$tailles = self::tailles_a_harmoniser();
+		$grande  = self::taille_grande( $original, $rectangle, $tailles );
+
+		if ( null !== $grande ) {
+			$tailles[ self::TAILLE_GRANDE ] = $grande;
+		}
+
+		return $tailles;
+	}
+
+	/**
+	 * Fichier natif qu'une harmonisée remplace, '' s'il n'y en a pas. Le carré « grand » ne
+	 * remplace aucune sous-taille : c'est l'ORIGINAL qu'il remplace à l'agrandissement, donc
+	 * c'est lui son chemin natif.
+	 */
+	private static function chemin_natif( $original, $metadata, $nom ) {
+		if ( ! empty( $metadata['sizes'][ $nom ]['file'] ) ) {
+			return trailingslashit( dirname( $original ) ) . $metadata['sizes'][ $nom ]['file'];
+		}
+
+		return self::TAILLE_GRANDE === $nom ? $original : '';
+	}
+
+	/**
+	 * Vrai quand chaque harmonisée attendue est inventoriée, présente, pas plus ancienne que
+	 * l'original, rattachée au bon fichier natif, et pourvue de son .webp (ou d'un refus
+	 * tracé). La voie automatique s'en sert pour ne rien réécrire sans raison. Un rectangle
+	 * de recadrage modifié n'est pas détecté : `wp images-legeres harmoniser` reste la voie.
+	 */
+	public static function a_jour( $attachment_id ) {
+		$original = get_attached_file( $attachment_id );
+
+		if ( ! $original || ! file_exists( $original ) ) {
+			return false;
+		}
+
+		$inventaire = array_column( ImagesLegeres_Harmonisees::par_attachment( $attachment_id ), null, 'chemin_harmonise' );
+		$metadata   = wp_get_attachment_metadata( $attachment_id );
+		$attendues  = array();
+
+		// Deux tailles de mêmes dimensions partagent un fichier et une ligne d'inventaire : la
+		// dernière écrite par `generer()` l'emporte, ici aussi.
+		foreach ( self::tailles_pour( $original, ImagesLegeres_Recadrage::obtenir( $attachment_id ) ) as $nom => $dimensions ) {
+			$destination               = self::chemin_harmonise( $original, $dimensions[0], $dimensions[1] );
+			$attendues[ $destination ] = self::chemin_natif( $original, $metadata, $nom );
+		}
+
+		foreach ( $attendues as $destination => $natif ) {
+			$relatif = ImagesLegeres_Moteur::chemin_relatif( $destination );
+			$natif   = '' !== $natif ? ImagesLegeres_Moteur::chemin_relatif( $natif ) : '';
+
+			if ( empty( $inventaire[ $relatif ] )
+				|| $inventaire[ $relatif ]['chemin_natif'] !== $natif
+				|| ! file_exists( $destination )
+				|| filemtime( $destination ) < filemtime( $original ) ) {
+				return false;
+			}
+
+			if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) && ! file_exists( $destination . '.webp' ) ) {
+				$trace = ImagesLegeres_Table::par_chemin( $relatif );
+
+				if ( ! $trace || 'ignore' !== ( (array) $trace )['etat'] ) {
+					return false;
+				}
+			}
+		}
+
+		return ! empty( $attendues );
+	}
+
 	/** Chemin absolu du fichier harmonisé d'une pièce jointe pour une taille donnée. */
 	public static function chemin_harmonise( $chemin_original, $largeur, $hauteur ) {
 		$dossier   = trailingslashit( dirname( $chemin_original ) );
@@ -212,22 +284,13 @@ class ImagesLegeres_Harmonisation {
 		$rectangle = ImagesLegeres_Recadrage::obtenir( $attachment_id );
 		$resultats = array();
 
-		$tailles = self::tailles_a_harmoniser();
-		$grande  = self::taille_grande( $original, $rectangle, $tailles );
-
-		if ( null !== $grande ) {
-			$tailles[ self::TAILLE_GRANDE ] = $grande;
-		}
+		$tailles = self::tailles_pour( $original, $rectangle );
 
 		foreach ( $tailles as $nom => $dimensions ) {
 			list( $largeur, $hauteur ) = $dimensions;
 
 			$destination = self::chemin_harmonise( $original, $largeur, $hauteur );
-			// Le carré « grand » ne remplace aucune sous-taille : c'est l'ORIGINAL qu'il
-			// remplace à l'agrandissement, donc c'est lui son chemin natif.
-			$natif = ! empty( $metadata['sizes'][ $nom ]['file'] )
-				? trailingslashit( dirname( $original ) ) . $metadata['sizes'][ $nom ]['file']
-				: ( self::TAILLE_GRANDE === $nom ? $original : '' );
+			$natif = self::chemin_natif( $original, $metadata, $nom );
 
 			if ( $dry_run ) {
 				$resultats[] = array( 'taille' => $nom, 'fichier' => wp_basename( $destination ), 'etat' => 'a-faire', 'motif' => 'dry-run : aucune écriture' );

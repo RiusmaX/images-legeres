@@ -26,6 +26,9 @@ class ImagesLegeres_Lot {
 	const HOOK_FLUX_ACCROCHE  = 'images_legeres_flux_reglages_changes';
 	const GROUPE_AS           = 'images-legeres';
 
+	/** Action de fond des nouvelles images : distincte du lot manuel, sans plage horaire. */
+	const HOOK_AUTO           = 'images_legeres_traiter_nouvelles';
+
 	const CLES_REGLAGES_FLUX = array(
 		'image_flux_active',
 		'flux_google_actif',
@@ -36,6 +39,9 @@ class ImagesLegeres_Lot {
 
 	public static function enregistrer() {
 		add_action( self::HOOK, array( __CLASS__, 'traiter_action' ) );
+		add_action( self::HOOK_AUTO, array( __CLASS__, 'traiter_nouvelles' ) );
+		add_action( 'added_post_meta', array( __CLASS__, 'image_posee_sur_produit' ), 10, 4 );
+		add_action( 'updated_post_meta', array( __CLASS__, 'image_posee_sur_produit' ), 10, 4 );
 		add_action( self::HOOK_FLUX_ACCROCHE, array( __CLASS__, 'remettre_flux_en_file' ) );
 	}
 
@@ -91,6 +97,7 @@ class ImagesLegeres_Lot {
 	public static function annuler_planifications() {
 		if ( function_exists( 'as_unschedule_all_actions' ) ) {
 			as_unschedule_all_actions( self::HOOK, array(), self::GROUPE_AS );
+			as_unschedule_all_actions( self::HOOK_AUTO, array(), self::GROUPE_AS );
 		}
 	}
 
@@ -128,15 +135,159 @@ class ImagesLegeres_Lot {
 		self::planifier_prochaine( (float) ImagesLegeres_Reglages::valeur( 'pause_entre_images_secondes' ) );
 	}
 
+	/**
+	 * Met une image en file pour le traitement de fond et le planifie. Seule entrée de la voie
+	 * automatique : `amorcer()` et les changements de réglages de flux ne passent pas par ici,
+	 * les gros lots restent donc manuels et de nuit.
+	 */
+	public static function mettre_en_file_auto( $attachment_id, $motif ) {
+		if ( ImagesLegeres_File::remettre_a_faire( $attachment_id, $motif ) ) {
+			self::planifier_auto( self::delai_auto_secondes() );
+		}
+	}
+
+	/**
+	 * Gestionnaire de `added_post_meta` / `updated_post_meta` : image principale ou galerie d'un
+	 * produit ou d'une variation. Rien n'est traité ici, l'envoi et l'enregistrement de la
+	 * fiche ne sont pas ralentis.
+	 */
+	public static function image_posee_sur_produit( $meta_id, $objet_id, $cle, $valeur ) {
+		if ( '_thumbnail_id' !== $cle && '_product_image_gallery' !== $cle ) {
+			return;
+		}
+
+		if ( ! ImagesLegeres_Reglages::valeur( 'harmonisation_produit_active' )
+			|| ! in_array( get_post_type( $objet_id ), ImagesLegeres_Moteur::TYPES_PRODUIT, true ) ) {
+			return;
+		}
+
+		foreach ( array_filter( array_map( 'intval', explode( ',', (string) $valeur ) ) ) as $attachment_id ) {
+			if ( wp_attachment_is_image( $attachment_id ) && ! ImagesLegeres_Harmonisation::a_jour( $attachment_id ) ) {
+				self::mettre_en_file_auto( $attachment_id, ImagesLegeres_File::MOTIF_PRODUIT );
+			}
+		}
+	}
+
+	public static function delai_auto_secondes() {
+		// Une minute : WordPress enregistre les métadonnées après chaque sous-taille créée.
+		return (int) apply_filters( 'images_legeres_auto_delai_secondes', MINUTE_IN_SECONDS );
+	}
+
+	/** Planifie le traitement de fond, sauf si une action est déjà en attente. */
+	public static function planifier_auto( $delai_secondes ) {
+		if ( ! self::action_scheduler_disponible() ) {
+			return;
+		}
+
+		// Métadonnées écrites avant l'initialisation d'Action Scheduler : on attend qu'il soit prêt.
+		if ( ! did_action( 'action_scheduler_init' ) ) {
+			add_action(
+				'action_scheduler_init',
+				static function () use ( $delai_secondes ) {
+					self::planifier_auto( $delai_secondes );
+				}
+			);
+			return;
+		}
+
+		// `as_has_scheduled_action()` compte aussi l'action en cours d'exécution : seules les
+		// actions en attente interdisent d'en planifier une.
+		$en_attente = as_get_scheduled_actions(
+			array(
+				'hook'     => self::HOOK_AUTO,
+				'group'    => self::GROUPE_AS,
+				'status'   => ActionScheduler_Store::STATUS_PENDING,
+				'per_page' => 1,
+			),
+			'ids'
+		);
+
+		if ( empty( $en_attente ) ) {
+			as_schedule_single_action( time() + max( 0, (int) round( $delai_secondes ) ), self::HOOK_AUTO, array(), self::GROUPE_AS );
+		}
+	}
+
+	private static function replanifier_auto( $delai_secondes ) {
+		as_unschedule_all_actions( self::HOOK_AUTO, array(), self::GROUPE_AS );
+		self::planifier_auto( $delai_secondes );
+	}
+
+	/**
+	 * Traite UNE image arrivée par la voie automatique, quels que soient l'état du lot manuel
+	 * et la plage horaire. Le garde-fou de charge s'applique.
+	 */
+	public static function traiter_nouvelles() {
+		ImagesLegeres_File::reprendre_bloquees();
+
+		if ( self::charge_trop_elevee() ) {
+			if ( ImagesLegeres_File::prochaine_auto() || ImagesLegeres_File::auto_en_cours() ) {
+				self::replanifier_auto( self::retard_secondes() );
+			}
+			return;
+		}
+
+		$attachment_id = ImagesLegeres_File::prochaine_auto();
+
+		if ( $attachment_id ) {
+			// Filet posé AVANT le traitement : une erreur fatale ne doit pas arrêter la file.
+			self::planifier_auto( self::retard_secondes() );
+			self::traiter_un( $attachment_id );
+		}
+
+		if ( ImagesLegeres_File::prochaine_auto() ) {
+			self::replanifier_auto( (float) ImagesLegeres_Reglages::valeur( 'pause_entre_images_secondes' ) );
+		} elseif ( ImagesLegeres_File::auto_en_cours() ) {
+			self::planifier_auto( self::retard_secondes() );
+		} else {
+			as_unschedule_all_actions( self::HOOK_AUTO, array(), self::GROUPE_AS );
+		}
+	}
+
+	/** Ce dont dépend le résultat : s'il change pendant le traitement, l'image repasse. */
+	private static function signature( $attachment_id ) {
+		wp_cache_delete( $attachment_id, 'post_meta' );
+
+		return wp_json_encode(
+			array(
+				ImagesLegeres_Moteur::fichiers_de_attachment( $attachment_id ),
+				ImagesLegeres_Moteur::est_image_produit( $attachment_id ),
+			)
+		);
+	}
+
 	private static function traiter_un( $attachment_id ) {
-		ImagesLegeres_File::marquer_en_cours( $attachment_id );
+		$ligne = ImagesLegeres_File::ligne( $attachment_id );
+		$auto  = $ligne && in_array( $ligne['motif'], ImagesLegeres_File::MOTIFS_AUTO, true );
 
-		$resultats   = ImagesLegeres_Moteur::traiter_attachment( $attachment_id );
-		$resultats[] = ImagesLegeres_Flux::generer( $attachment_id );
+		// Réservation atomique : le lot manuel et la voie automatique partagent la file.
+		if ( ! ImagesLegeres_File::marquer_en_cours( $attachment_id ) ) {
+			return 'ignore';
+		}
 
-		list( $etat, $motif ) = self::resumer_resultats( $resultats );
+		$avant = $auto ? self::signature( $attachment_id ) : '';
+
+		try {
+			$resultats   = ImagesLegeres_Moteur::traiter_attachment( $attachment_id );
+			$resultats[] = ImagesLegeres_Flux::generer( $attachment_id );
+
+			if ( $auto
+				&& ImagesLegeres_Reglages::valeur( 'harmonisation_produit_active' )
+				&& ImagesLegeres_Moteur::est_image_produit( $attachment_id )
+				&& ! ImagesLegeres_Harmonisation::a_jour( $attachment_id ) ) {
+				$resultats = array_merge( $resultats, ImagesLegeres_Harmonisation::generer( $attachment_id ) );
+			}
+
+			list( $etat, $motif ) = self::resumer_resultats( $resultats );
+		} catch ( Throwable $erreur ) {
+			$etat  = 'erreur';
+			$motif = $erreur->getMessage();
+		}
 
 		ImagesLegeres_File::marquer_resultat( $attachment_id, $etat, $motif );
+
+		if ( $auto && self::signature( $attachment_id ) !== $avant ) {
+			ImagesLegeres_File::remettre_a_faire( $attachment_id, ImagesLegeres_File::MOTIF_SOUS_TAILLES );
+		}
 
 		return $etat;
 	}

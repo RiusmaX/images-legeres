@@ -37,7 +37,7 @@ class ImagesLegeres_Moteur {
 	 */
 	public static function remettre_en_file( $metadata, $attachment_id ) {
 		if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) ) {
-			ImagesLegeres_File::remettre_a_faire( (int) $attachment_id, 'sous-tailles régénérées' );
+			ImagesLegeres_Lot::mettre_en_file_auto( (int) $attachment_id, ImagesLegeres_File::MOTIF_SOUS_TAILLES );
 		}
 
 		return $metadata;

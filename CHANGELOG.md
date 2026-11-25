@@ -1,5 +1,16 @@
 # Journal des changements
 
+## 0.2.3
+
+- **Les nouvelles images sont traitées toutes seules.** Une image mise en file par un envoi ou
+  un changement de sous-tailles restait « à faire » tant que personne ne lançait le lot. Une
+  action de fond dédiée la convertit désormais en quelques minutes, hors plage horaire, avec
+  le même garde-fou de charge. La plage horaire reste la règle des lots manuels.
+- **Les photos posées sur un produit sont harmonisées automatiquement** (image principale ou
+  galerie, produit ou variation) quand l'harmonisation produit est active.
+- La prise d'une ligne de la file est atomique ; une nouvelle image qui coupe deux fois le
+  traitement passe en erreur au lieu de bloquer les suivantes.
+
 ## 0.2.2
 
 - **Les harmonisées ont enfin leur frère `.webp`.** Le JPEG harmonisé était écrit à la

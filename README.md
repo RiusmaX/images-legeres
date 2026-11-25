@@ -4,7 +4,7 @@ Extension WordPress qui convertit les images en WebP, retaille les originaux sur
 harmonise les photos produit WooCommerce au ratio cible et sert la même photo aux flux
 Google et Meta. Aucune dépendance réseau, aucune clé, aucun appel à un service externe.
 
-**Version 0.2.2.** Requiert WordPress 6.0 et PHP 8.1.
+**Version 0.2.3.** Requiert WordPress 6.0 et PHP 8.1.
 
 ## Installation
 
@@ -137,6 +137,17 @@ discipline de celui qui publie.
 Ajouter une migration : une entrée nommée dans `ImagesLegeres_Reglages::migrations()`, qui
 reçoit le tableau des réglages enregistrés et rend le tableau modifié. Elle doit être
 **idempotente** — elle peut être rejouée sur un site où son effet est déjà acquis.
+
+## Traitement automatique des nouvelles images
+
+Une image envoyée (ou dont les sous-tailles changent) est traitée en arrière-plan par Action
+Scheduler, environ une minute plus tard, une image par action, **sans attendre la plage
+horaire** et quel que soit l'état du lot manuel (« Pause » ne l'arrête pas). Le seuil de
+charge s'applique : au-delà, le passage est reporté. Une image posée en image principale ou
+en galerie d'un produit ou d'une variation est de plus harmonisée si l'harmonisation produit
+est active. Une harmonisée à jour n'est pas réécrite ; après un changement de rectangle de
+recadrage, lancer `wp images-legeres harmoniser <id>`. La plage horaire continue de régir les
+lots lancés à la main. Le passage dépend de WP-Cron (ou d'un cron système).
 
 ## Ligne de commande
 
@@ -283,7 +294,8 @@ docker compose -f tests/env/compose.yml exec -T wordpress \
 ```
 
 Tests : un script par sujet dans `tests/` — `test-activation.sh`, `test-moteur.sh`,
-`test-recadrage.sh`, `test-cli-interfaces.sh`, `test-flux.sh`, `test-lots.sh`, et
+`test-recadrage.sh`, `test-cli-interfaces.sh`, `test-flux.sh`, `test-lots.sh`,
+`test-auto.sh` (traitement automatique des nouvelles images, par WP-Cron réel), et
 `test-securite.sh` (protection d'accès des dossiers, suppression d'une pièce jointe,
 bornage du détournement Meta, traversée de chemin, nettoyage complet).
 `test-activation.sh` tourne **dans** le conteneur `cli`

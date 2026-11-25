@@ -18,6 +18,12 @@ class ImagesLegeres_File {
 	 */
 	const DELAI_BLOCAGE_MINUTES = 10;
 
+	/** Motifs qui désignent une ligne de la voie automatique (nouvelles images). */
+	const MOTIF_SOUS_TAILLES = 'sous-tailles régénérées';
+	const MOTIF_PRODUIT      = 'posée sur un produit';
+	const MOTIF_REPRISE_AUTO = 'nouvelle image, reprise après coupure';
+	const MOTIFS_AUTO        = array( self::MOTIF_SOUS_TAILLES, self::MOTIF_PRODUIT, self::MOTIF_REPRISE_AUTO );
+
 	public static function nom() {
 		global $wpdb;
 
@@ -141,7 +147,29 @@ class ImagesLegeres_File {
 		$delai        = (int) apply_filters( 'images_legeres_file_delai_blocage_minutes', self::DELAI_BLOCAGE_MINUTES );
 		$seuil        = gmdate( 'Y-m-d H:i:s', time() - $delai * MINUTE_IN_SECONDS );
 
-		return (int) $wpdb->query(
+		// Une nouvelle image qui coupe deux fois de suite le traitement passe en erreur : sans
+		// cela, la voie automatique la reprendrait sans fin et bloquerait les suivantes.
+		$abandonnees = (int) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} SET etat = 'erreur', motif = 'abandon après deux coupures', maj = %s WHERE etat = 'en-cours' AND motif = %s AND prise_le < %s", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				current_time( 'mysql', true ),
+				self::MOTIF_REPRISE_AUTO,
+				$seuil
+			)
+		);
+
+		$nouvelles = (int) $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} SET etat = 'a-faire', motif = %s, maj = %s WHERE etat = 'en-cours' AND motif IN ( %s, %s ) AND prise_le < %s", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				self::MOTIF_REPRISE_AUTO,
+				current_time( 'mysql', true ),
+				self::MOTIF_SOUS_TAILLES,
+				self::MOTIF_PRODUIT,
+				$seuil
+			)
+		);
+
+		return $abandonnees + $nouvelles + (int) $wpdb->query(
 			$wpdb->prepare(
 				"UPDATE {$table} SET etat = 'a-faire', motif = 'reprise après coupure', maj = %s WHERE etat = 'en-cours' AND prise_le < %s", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 				current_time( 'mysql', true ),
@@ -166,17 +194,51 @@ class ImagesLegeres_File {
 		return (int) $wpdb->get_var( "SELECT attachment_id FROM {$table} WHERE etat = 'a-faire' ORDER BY id ASC LIMIT 1" ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 	}
 
+	/**
+	 * Rend l'attachment_id de la plus ancienne ligne « a-faire » de la voie automatique, ou 0.
+	 */
+	public static function prochaine_auto() {
+		return self::premiere_auto( 'a-faire' );
+	}
+
+	/** Une ligne de la voie automatique est-elle en cours de traitement ? */
+	public static function auto_en_cours() {
+		return (bool) self::premiere_auto( 'en-cours' );
+	}
+
+	private static function premiere_auto( $etat ) {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return 0;
+		}
+
+		$table        = self::nom();
+		$emplacements = implode( ', ', array_fill( 0, count( self::MOTIFS_AUTO ), '%s' ) );
+
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT attachment_id FROM {$table} WHERE etat = %s AND motif IN ( {$emplacements} ) ORDER BY id ASC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				array_merge( array( $etat ), self::MOTIFS_AUTO )
+			)
+		);
+	}
+
+	/** Réserve une ligne « a-faire ». Rend false si un autre traitement l'a déjà prise. */
 	public static function marquer_en_cours( $attachment_id ) {
 		global $wpdb;
 
-		$wpdb->update(
+		return (bool) $wpdb->update(
 			self::nom(),
 			array(
 				'etat'     => 'en-cours',
 				'prise_le' => current_time( 'mysql', true ),
 				'maj'      => current_time( 'mysql', true ),
 			),
-			array( 'attachment_id' => (int) $attachment_id )
+			array(
+				'attachment_id' => (int) $attachment_id,
+				'etat'          => 'a-faire',
+			)
 		);
 	}
 
@@ -247,8 +309,11 @@ class ImagesLegeres_File {
 		return (int) $wpdb->query(
 			$wpdb->prepare(
 				"UPDATE {$table} f
-				SET f.etat = 'a-faire', f.motif = %s, f.maj = %s
+				SET f.motif = IF( f.etat = 'a-faire' AND f.motif IN ( %s, %s, %s ), f.motif, %s ), f.etat = 'a-faire', f.maj = %s
 				WHERE f.etat != 'en-cours' AND f.attachment_id IN ( {$images_produit} )", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+				self::MOTIF_SOUS_TAILLES,
+				self::MOTIF_PRODUIT,
+				self::MOTIF_REPRISE_AUTO,
 				'réglages de flux modifiés',
 				current_time( 'mysql', true )
 			)
