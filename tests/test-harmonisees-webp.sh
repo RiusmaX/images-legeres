@@ -81,11 +81,12 @@ verifier "produit et image créés (produit $ID_PRODUIT, image $ID_IMAGE)" $([[ 
 wp eval "ImagesLegeres_Recadrage::definir( $ID_IMAGE, 0, 300, 1800, 1800 );" >/dev/null
 wp images-legeres harmoniser "$ID_IMAGE" >/dev/null 2>&1
 
-# Toutes les harmonisées inventoriées, avec leur poids et la présence de leur frère.
+# Tous les fichiers harmonisés inventoriés (une ligne par fichier, même partagé entre
+# plusieurs tailles), avec leur poids et la présence de leur frère.
 etat_harmonisees() {
   wp eval "
 \$u = wp_upload_dir(); \$b = trailingslashit( \$u['basedir'] );
-foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ) as \$l ) {
+foreach ( array_column( ImagesLegeres_Harmonisees::par_attachment( $ID_IMAGE ), null, 'chemin_harmonise' ) as \$l ) {
   \$f = \$b . \$l['chemin_harmonise'];
   printf( \"%s|%d|%d|%s|%d\n\", \$l['taille'], \$l['largeur'], file_exists( \$f ) ? filesize( \$f ) : -1,
     file_exists( \$f . '.webp' ) ? 'webp' : 'SANS', file_exists( \$f . '.webp' ) ? filesize( \$f . '.webp' ) : -1 );

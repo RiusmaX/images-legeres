@@ -135,7 +135,8 @@ Git ou par archive ne change pas forcément le numéro ; s'y fier, c'est parier 
 discipline de celui qui publie.
 
 Ajouter une migration : une entrée nommée dans `ImagesLegeres_Reglages::migrations()`, qui
-reçoit le tableau des réglages enregistrés et rend le tableau modifié. Elle doit être
+reçoit le tableau des réglages enregistrés et rend le tableau modifié (ou `null` en cas
+d'échec, pour être retentée). Le même registre sert aux migrations de schéma. Elle doit être
 **idempotente** — elle peut être rejouée sur un site où son effet est déjà acquis.
 
 ## Traitement automatique des nouvelles images

@@ -8,6 +8,13 @@
   le même garde-fou de charge. La plage horaire reste la règle des lots manuels.
 - **Les photos posées sur un produit sont harmonisées automatiquement** (image principale ou
   galerie, produit ou variation) quand l'harmonisation produit est active.
+- **Chaque sous-taille native d'une photo harmonisée reçoit son carré.** Des tailles de mêmes
+  dimensions partagent un fichier carré : l'inventaire n'en gardait qu'une ligne, et la
+  dernière écrasait le fichier natif des autres (vignettes de l'accueil et de la boutique
+  restées rectangulaires). Il garde désormais une ligne par taille (migration automatique,
+  sans perte). Quand l'original est trop petit pour une taille déclarée, il a lui aussi son
+  carré. **Après la mise à jour, relancer `wp images-legeres harmoniser <ids>`** sur les
+  photos déjà harmonisées, puis vider le cache.
 - La prise d'une ligne de la file est atomique ; une nouvelle image qui coupe deux fois le
   traitement passe en erreur au lieu de bloquer les suivantes.
 

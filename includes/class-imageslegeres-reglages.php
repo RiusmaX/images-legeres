@@ -93,14 +93,15 @@ class ImagesLegeres_Reglages {
 	 * contrôle `wp images-legeres orphelins`.
 	 *
 	 * Chaque migration reçoit le tableau des réglages enregistrés et rend le tableau
-	 * modifié. Elle doit être idempotente : elle peut être rejouée sur un site où son effet
+	 * modifié, ou null si elle a échoué (elle n'est alors pas inscrite). Elle doit être idempotente : elle peut être rejouée sur un site où son effet
 	 * est déjà acquis (option restaurée depuis une sauvegarde, par exemple).
 	 *
 	 * @return array<string, callable>
 	 */
 	public static function migrations() {
 		return array(
-			'gain-minimal-zero-2026-11-15' => array( __CLASS__, 'migration_gain_minimal_zero' ),
+			'gain-minimal-zero-2026-11-15'      => array( __CLASS__, 'migration_gain_minimal_zero' ),
+			'harmonisees-par-taille-2026-11-25' => array( __CLASS__, 'migration_harmonisees_par_taille' ),
 		);
 	}
 
@@ -117,6 +118,16 @@ class ImagesLegeres_Reglages {
 		}
 
 		return $reglages;
+	}
+
+	/**
+	 * Schéma : une ligne d'inventaire par taille harmonisée, et non plus par fichier carré.
+	 *
+	 * @param array $reglages Réglages enregistrés, rendus inchangés.
+	 * @return array|null null en cas d'échec : la migration sera retentée au prochain chargement.
+	 */
+	public static function migration_harmonisees_par_taille( array $reglages ) {
+		return ImagesLegeres_Harmonisees::migrer_cle() ? $reglages : null;
 	}
 
 	/**
@@ -151,7 +162,13 @@ class ImagesLegeres_Reglages {
 				continue;
 			}
 
-			$enregistres  = call_user_func( $rappel, $enregistres );
+			$resultat = call_user_func( $rappel, $enregistres );
+
+			if ( ! is_array( $resultat ) ) {
+				continue;
+			}
+
+			$enregistres  = $resultat;
 			$deja[]       = $nom;
 			$appliquees[] = $nom;
 		}

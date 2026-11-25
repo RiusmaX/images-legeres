@@ -2,8 +2,10 @@
 /**
  * Inventaire des sous-tailles harmonisées (F5).
  *
- * Table propre à l'extension : une ligne par fichier harmonisé écrit sur le disque, avec le
- * fichier natif qu'il remplace à l'affichage. Deux raisons de ne pas vivre dans
+ * Table propre à l'extension : une ligne par taille harmonisée, avec le carré écrit sur le
+ * disque et le fichier natif qu'il remplace à l'affichage. Plusieurs tailles de mêmes
+ * dimensions partagent le même carré mais pas forcément le même fichier natif : chacune garde
+ * sa ligne (clé unique `carre_taille`). Deux raisons de ne pas vivre dans
  * `_wp_attachment_metadata` : une entrée de `sizes` serait servie à TOUT LE MONDE dès sa
  * création — le mode aperçu ne protégerait plus rien (constat de production du 2026-11-15) —
  * et elle écraserait l'entrée native, que l'extension ne doit jamais toucher.
@@ -43,12 +45,62 @@ class ImagesLegeres_Harmonisees {
 			poids BIGINT UNSIGNED NOT NULL DEFAULT 0,
 			maj DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
 			PRIMARY KEY  (id),
-			UNIQUE KEY chemin_harmonise (chemin_harmonise(191)),
+			UNIQUE KEY carre_taille (chemin_harmonise(191),taille),
 			KEY chemin_natif (chemin_natif(191)),
 			KEY attachment_id (attachment_id)
 		) {$charset_collate};";
 
 		dbDelta( $sql );
+
+		// `dbDelta` ajoute les index manquants mais n'en retire jamais.
+		self::migrer_cle();
+	}
+
+	/**
+	 * Remplace la clé unique d'avant la 0.2.3 (un seul rang par carré) par la clé (carré,
+	 * taille). La nouvelle clé est moins stricte que l'ancienne : aucune ligne ne peut être
+	 * perdue ni refusée. Idempotente.
+	 *
+	 * @return bool Vrai quand la table est au nouveau schéma, ou absente.
+	 */
+	public static function migrer_cle() {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return true;
+		}
+
+		$table         = self::nom();
+		$index         = self::index();
+		$modifications = array();
+
+		if ( ! in_array( 'carre_taille', $index, true ) ) {
+			$modifications[] = 'ADD UNIQUE KEY carre_taille (chemin_harmonise(191), taille)';
+		}
+
+		if ( in_array( 'chemin_harmonise', $index, true ) ) {
+			$modifications[] = 'DROP INDEX chemin_harmonise';
+		}
+
+		if ( empty( $modifications ) ) {
+			return true;
+		}
+
+		// Un seul ALTER : jamais d'état intermédiaire sans clé unique.
+		$wpdb->query( "ALTER TABLE {$table} " . implode( ', ', $modifications ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		$index = self::index();
+
+		return in_array( 'carre_taille', $index, true ) && ! in_array( 'chemin_harmonise', $index, true );
+	}
+
+	/** Noms des index de la table. */
+	private static function index() {
+		global $wpdb;
+
+		$table = self::nom();
+
+		return array_column( (array) $wpdb->get_results( "SHOW INDEX FROM {$table}", ARRAY_A ), 'Key_name' ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 	}
 
 	public static function supprimer() {
@@ -66,7 +118,7 @@ class ImagesLegeres_Harmonisees {
 		return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
 	}
 
-	/** Insère ou met à jour la ligne d'un fichier harmonisé (unique par chemin). */
+	/** Insère ou met à jour la ligne d'une taille harmonisée (unique par carré et taille). */
 	public static function enregistrer( array $donnees ) {
 		global $wpdb;
 
@@ -82,8 +134,8 @@ class ImagesLegeres_Harmonisees {
 		}
 
 		$table    = self::nom();
-		$donnees['maj'] = current_time( 'mysql', true );
-		$existante = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM {$table} WHERE chemin_harmonise = %s", $donnees['chemin_harmonise'] ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$donnees  = array_merge( array( 'taille' => '', 'maj' => current_time( 'mysql', true ) ), $donnees );
+		$existante = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM {$table} WHERE chemin_harmonise = %s AND taille = %s", $donnees['chemin_harmonise'], $donnees['taille'] ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 
 		if ( $existante ) {
 			$wpdb->update( $table, $donnees, array( 'id' => $existante->id ) );
@@ -120,6 +172,21 @@ class ImagesLegeres_Harmonisees {
 		return (array) $wpdb->get_results(
 			$wpdb->prepare( "SELECT * FROM {$table} WHERE attachment_id = %d ORDER BY id ASC", (int) $attachment_id ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
+		);
+	}
+
+	/** Vrai quand une AUTRE pièce jointe inventorie le même carré. */
+	public static function reference_ailleurs( $chemin_harmonise, $attachment_id ) {
+		global $wpdb;
+
+		if ( ! self::existe() ) {
+			return false;
+		}
+
+		$table = self::nom();
+
+		return (bool) $wpdb->get_var(
+			$wpdb->prepare( "SELECT id FROM {$table} WHERE chemin_harmonise = %s AND attachment_id <> %d LIMIT 1", $chemin_harmonise, (int) $attachment_id ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		);
 	}
 
@@ -163,12 +230,14 @@ class ImagesLegeres_Harmonisees {
 		$table         = self::nom();
 		$emplacements  = implode( ', ', array_fill( 0, count( $relatifs ), '%s' ) );
 		$lignes        = $wpdb->get_results(
-			$wpdb->prepare( "SELECT attachment_id, chemin_natif, chemin_harmonise, largeur, hauteur FROM {$table} WHERE chemin_natif IN ( {$emplacements} )", $relatifs ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			$wpdb->prepare( "SELECT attachment_id, chemin_natif, chemin_harmonise, largeur, hauteur FROM {$table} WHERE chemin_natif IN ( {$emplacements} ) ORDER BY maj ASC, largeur ASC, id ASC", $relatifs ), // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
 		);
 
 		$map = array();
 
+		// Un natif partagé par plusieurs tailles : la dernière ligne l'emporte, donc la
+		// génération la plus récente et, en son sein, le plus grand carré.
 		foreach ( (array) $lignes as $ligne ) {
 			$map[ $ligne['chemin_natif'] ] = array(
 				'attachment' => (int) $ligne['attachment_id'],

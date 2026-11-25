@@ -34,6 +34,9 @@ class ImagesLegeres_Harmonisation {
 	 * Taille propre à l'extension : le plus grand carré que l'original donne SANS
 	 * agrandissement, pour le zoom et la visionneuse de la fiche produit.
 	 *
+	 * Elle sert aussi quand une taille déclarée n'a pas de fichier natif (original trop petit) :
+	 * WordPress sert alors l'original, qui doit lui aussi avoir son carré.
+	 *
 	 * Sans elle, la plus grande harmonisée d'une photo est celle de la fiche produit
 	 * (1024 px de côté chez Monko) alors que l'original en fait 1440 : l'agrandissement
 	 * serait servi en nette perte de définition, ou resterait sur le rectangle natif —
@@ -120,6 +123,29 @@ class ImagesLegeres_Harmonisation {
 	 * @return array|null array( largeur, hauteur ) ou null
 	 */
 	public static function taille_grande( $original, $rectangle, array $tailles_declarees ) {
+		$naturel = self::taille_naturelle( $original, $rectangle );
+
+		if ( null === $naturel ) {
+			return null;
+		}
+
+		list( $largeur, $hauteur ) = $naturel;
+
+		$plus_grande_declaree = 0;
+
+		foreach ( $tailles_declarees as $dimensions ) {
+			$plus_grande_declaree = max( $plus_grande_declaree, (int) $dimensions[0] );
+		}
+
+		return $largeur > $plus_grande_declaree ? array( $largeur, $hauteur ) : null;
+	}
+
+	/**
+	 * Carré que l'original donne à son échelle native (voir `taille_grande`).
+	 *
+	 * @return array|null array( largeur, hauteur ) ou null
+	 */
+	private static function taille_naturelle( $original, $rectangle ) {
 		$mesure = @getimagesize( $original ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 
 		if ( ! is_array( $mesure ) || empty( $mesure[0] ) || empty( $mesure[1] ) ) {
@@ -138,25 +164,56 @@ class ImagesLegeres_Harmonisation {
 			$largeur = (int) max( (int) $mesure[0], round( (int) $mesure[1] * $ratio ) );
 		}
 
-		$hauteur = (int) max( 1, round( $largeur / $ratio ) );
+		return $largeur < 1 ? null : array( $largeur, (int) max( 1, round( $largeur / $ratio ) ) );
+	}
 
-		if ( $largeur < 1 ) {
+	/**
+	 * Carré qui remplace l'original quand une taille déclarée n'a pas de fichier natif : parmi
+	 * les dimensions déjà produites, la plus petite qui couvre l'original sans dépasser
+	 * `COTE_GRANDE_MAX`, sinon la plus grande sous ce plafond, sinon la plus petite.
+	 *
+	 * @return array|null array( largeur, hauteur ), null si chaque taille a son fichier natif
+	 */
+	private static function taille_pour_original( $original, $rectangle, $metadata, array $tailles ) {
+		$naturel = self::taille_naturelle( $original, $rectangle );
+
+		if ( null === $naturel || empty( array_diff_key( $tailles, isset( $metadata['sizes'] ) ? (array) $metadata['sizes'] : array() ) ) ) {
 			return null;
 		}
 
-		$plus_grande_declaree = 0;
+		$candidates = array_values( $tailles );
+		usort(
+			$candidates,
+			function ( $a, $b ) {
+				return $a[0] - $b[0];
+			}
+		);
 
-		foreach ( $tailles_declarees as $dimensions ) {
-			$plus_grande_declaree = max( $plus_grande_declaree, (int) $dimensions[0] );
+		$retenue = $candidates[0];
+
+		foreach ( $candidates as $dimensions ) {
+			if ( $dimensions[0] > self::COTE_GRANDE_MAX ) {
+				break;
+			}
+
+			$retenue = $dimensions;
+
+			if ( $dimensions[0] >= $naturel[0] ) {
+				break;
+			}
 		}
 
-		return $largeur > $plus_grande_declaree ? array( $largeur, $hauteur ) : null;
+		return $retenue;
 	}
 
 	/** Tailles à produire pour un original donné, carré « grand » compris. */
-	private static function tailles_pour( $original, $rectangle ) {
+	private static function tailles_pour( $original, $rectangle, $metadata ) {
 		$tailles = self::tailles_a_harmoniser();
 		$grande  = self::taille_grande( $original, $rectangle, $tailles );
+
+		if ( null === $grande ) {
+			$grande = self::taille_pour_original( $original, $rectangle, $metadata, $tailles );
+		}
 
 		if ( null !== $grande ) {
 			$tailles[ self::TAILLE_GRANDE ] = $grande;
@@ -191,23 +248,27 @@ class ImagesLegeres_Harmonisation {
 			return false;
 		}
 
-		$inventaire = array_column( ImagesLegeres_Harmonisees::par_attachment( $attachment_id ), null, 'chemin_harmonise' );
-		$metadata   = wp_get_attachment_metadata( $attachment_id );
-		$attendues  = array();
+		$inventaire = array();
 
-		// Deux tailles de mêmes dimensions partagent un fichier et une ligne d'inventaire : la
-		// dernière écrite par `generer()` l'emporte, ici aussi.
-		foreach ( self::tailles_pour( $original, ImagesLegeres_Recadrage::obtenir( $attachment_id ) ) as $nom => $dimensions ) {
-			$destination               = self::chemin_harmonise( $original, $dimensions[0], $dimensions[1] );
-			$attendues[ $destination ] = self::chemin_natif( $original, $metadata, $nom );
+		foreach ( ImagesLegeres_Harmonisees::par_attachment( $attachment_id ) as $ligne ) {
+			$inventaire[ $ligne['chemin_harmonise'] . '|' . $ligne['taille'] ] = $ligne;
 		}
 
-		foreach ( $attendues as $destination => $natif ) {
-			$relatif = ImagesLegeres_Moteur::chemin_relatif( $destination );
-			$natif   = '' !== $natif ? ImagesLegeres_Moteur::chemin_relatif( $natif ) : '';
+		$metadata  = wp_get_attachment_metadata( $attachment_id );
+		$attendues = array();
 
-			if ( empty( $inventaire[ $relatif ] )
-				|| $inventaire[ $relatif ]['chemin_natif'] !== $natif
+		foreach ( self::tailles_pour( $original, ImagesLegeres_Recadrage::obtenir( $attachment_id ), $metadata ) as $nom => $dimensions ) {
+			$destination = self::chemin_harmonise( $original, $dimensions[0], $dimensions[1] );
+			$natif       = self::chemin_natif( $original, $metadata, $nom );
+			$attendues[] = array( $destination, (string) $nom, '' !== $natif ? ImagesLegeres_Moteur::chemin_relatif( $natif ) : '' );
+		}
+
+		foreach ( $attendues as list( $destination, $nom, $natif ) ) {
+			$relatif = ImagesLegeres_Moteur::chemin_relatif( $destination );
+			$cle     = $relatif . '|' . $nom;
+
+			if ( empty( $inventaire[ $cle ] )
+				|| $inventaire[ $cle ]['chemin_natif'] !== $natif
 				|| ! file_exists( $destination )
 				|| filemtime( $destination ) < filemtime( $original ) ) {
 				return false;
@@ -284,7 +345,8 @@ class ImagesLegeres_Harmonisation {
 		$rectangle = ImagesLegeres_Recadrage::obtenir( $attachment_id );
 		$resultats = array();
 
-		$tailles = self::tailles_pour( $original, $rectangle );
+		$tailles = self::tailles_pour( $original, $rectangle, $metadata );
+		$maj     = current_time( 'mysql', true ); // Une seule date par génération.
 
 		foreach ( $tailles as $nom => $dimensions ) {
 			list( $largeur, $hauteur ) = $dimensions;
@@ -313,6 +375,7 @@ class ImagesLegeres_Harmonisation {
 					'largeur'          => (int) $largeur,
 					'hauteur'          => (int) $hauteur,
 					'poids'            => (int) filesize( $destination ),
+					'maj'              => $maj,
 				)
 			);
 
@@ -452,8 +515,14 @@ class ImagesLegeres_Harmonisation {
 		$base      = trailingslashit( $basedir );
 		$supprimes = array();
 
-		foreach ( ImagesLegeres_Harmonisees::par_attachment( $attachment_id ) as $ligne ) {
-			foreach ( array( $base . $ligne['chemin_harmonise'], $base . $ligne['chemin_harmonise'] . '.webp' ) as $chemin ) {
+		$carres = array_unique( array_column( ImagesLegeres_Harmonisees::par_attachment( $attachment_id ), 'chemin_harmonise' ) );
+
+		foreach ( $carres as $carre ) {
+			if ( ImagesLegeres_Harmonisees::reference_ailleurs( $carre, $attachment_id ) ) {
+				continue;
+			}
+
+			foreach ( array( $base . $carre, $base . $carre . '.webp' ) as $chemin ) {
 				if ( file_exists( $chemin ) && wp_delete_file_from_directory( $chemin, $basedir ) ) {
 					$supprimes[] = $chemin;
 				}
@@ -479,6 +548,8 @@ class ImagesLegeres_Harmonisation {
 			}
 		}
 
+		// Un carré partagé par plusieurs tailles n'est listé (et supprimé) qu'une fois.
+		$trouves = array_values( array_unique( $trouves ) );
 		sort( $trouves );
 
 		return $trouves;
