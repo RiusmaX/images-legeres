@@ -96,6 +96,7 @@ egal "l'état du lot n'a pas bougé" "arret" "$(php_wp 'echo ImagesLegeres_Lot::
 # minute). Pour la suite, les deux attentes sont raccourcies, sinon elle dure plus de 10 min.
 docker compose -f compose.yml exec -T wordpress sh -c 'mkdir -p /var/www/html/wp-content/mu-plugins && cat > /var/www/html/wp-content/mu-plugins/il-test-rythme.php' <<'PHP'
 <?php
+define( 'DISABLE_WP_CRON', true ); // sinon le verrou « doing_cron » des appels wp bloque wp-cron.php 60 s
 add_filter( 'images_legeres_auto_delai_secondes', '__return_zero' );
 add_filter( 'cron_schedules', static function ( $s ) { $s['il_test'] = array( 'interval' => 5, 'display' => '5 s' ); return $s; } );
 add_filter( 'action_scheduler_run_schedule', static function () { return 'il_test'; } );
