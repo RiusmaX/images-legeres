@@ -6,7 +6,9 @@
   recevait des adresses en `.webp`, et un enregistrement les écrivait dans le contenu. Ni
   WebP ni harmonisée sur `et_fb`, `app_window`, `et_pb_preview`, `et_pb_preview_nonce`,
   `et_tb`, l'aperçu WordPress ou de l'outil de personnalisation, l'administration, AJAX,
-  REST et les requêtes JSON. La page publique est réécrite comme avant. Un contenu déjà
+  REST et les requêtes JSON. Les paramètres d'édition et d'aperçu ne comptent que pour un
+  utilisateur connecté qui peut modifier : un visiteur qui les ajoute à l'adresse reçoit la
+  page réécrite. La page publique est réécrite comme avant. Un contenu déjà
   enregistré avec ces adresses n'est pas corrigé par la mise à jour.
 - **Les nouvelles images sont traitées toutes seules.** Une image mise en file par un envoi ou
   un changement de sous-tailles restait « à faire » tant que personne ne lançait le lot. Une
@@ -23,6 +25,10 @@
   photos déjà harmonisées, puis vider le cache.
 - La prise d'une ligne de la file est atomique ; une nouvelle image qui coupe deux fois le
   traitement passe en erreur au lieu de bloquer les suivantes.
+- **Un motif trop long ne bloque plus la file.** Au-delà de 500 caractères (une image
+  d'une quinzaine de fichiers suffit), le résultat n'était pas écrit : l'image restait « en
+  cours », était retraitée, puis abandonnée en erreur. Les motifs répétés sont regroupés, le
+  texte est tronqué, et une écriture refusée est notée au journal.
 
 ## 0.2.2
 

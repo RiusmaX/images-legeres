@@ -2,10 +2,12 @@
 /**
  * Un cas par processus (les constantes ne se défont pas) : prépare la requête, passe un
  * contenu témoin par le vrai tampon de sortie et dit s'il en sort intact.
- * Usage : wp eval-file edition.php <cas> <identifiant de la page témoin>
+ * Usage : wp eval-file edition.php <cas> <identifiant de la page témoin> [public]
+ * « public » : l'utilisateur courant ne peut pas modifier, le paramètre doit être ignoré.
  */
 
 list( $cas, $id_page ) = $args;
+$public = isset( $args[2] ) && 'public' === $args[2];
 
 $contenu = get_post( (int) $id_page )->post_content;
 
@@ -66,7 +68,7 @@ if ( ob_get_level() === $niveau_tampon && in_array( 'ImagesLegeres_Service::reec
 }
 $sortie = ob_get_clean();
 
-if ( 0 === strpos( $cas, 'temoin' ) ) {
+if ( $public || 0 === strpos( $cas, 'temoin' ) ) {
 	$ok = false !== strpos( $sortie, '.jpg.webp' ) && false !== strpos( $sortie, '-harmonisee-temoin.jpg' );
 	echo ( $ok ? 'OK  ' : 'FAIL' ) . " - $cas : réécriture WebP et harmonisée présentes\n";
 } else {

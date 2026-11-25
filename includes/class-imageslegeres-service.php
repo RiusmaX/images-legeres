@@ -69,9 +69,21 @@ class ImagesLegeres_Service {
 	 * Requête dont la réponse peut revenir en base : éditeur visuel Divi, Theme Builder,
 	 * aperçus, administration, AJAX, REST. Une adresse réécrite servie à un éditeur est
 	 * enregistrée telle quelle dans le contenu.
+	 *
+	 * Les paramètres d'édition et d'aperçu ne comptent que pour un utilisateur connecté qui
+	 * peut modifier : un visiteur ne coupe pas la réécriture en les ajoutant à l'adresse.
 	 */
 	public static function est_requete_d_edition_ou_d_apercu() {
-		// La présence du paramètre suffit, quelle que soit sa valeur.
+		return ( is_user_logged_in() && current_user_can( 'edit_posts' ) && self::a_un_parametre_d_edition() )
+			|| is_admin()
+			|| wp_doing_ajax()
+			|| ( defined( 'REST_REQUEST' ) && REST_REQUEST )
+			|| wp_is_json_request()
+			|| is_customize_preview();
+	}
+
+	private static function a_un_parametre_d_edition() {
+		// La présence du paramètre suffit, quelle que soit sa valeur (sauf `preview`).
 		$parametres = array( 'et_fb', 'app_window', 'et_pb_preview', 'et_pb_preview_nonce', 'et_tb', 'preview_id' );
 
 		// Lecture seule de la requête : aucune action n'en découle, donc pas de nonce.
@@ -82,15 +94,8 @@ class ImagesLegeres_Service {
 			}
 		}
 
-		$apercu = isset( $_GET['preview'] ) && 'true' === $_GET['preview'];
+		return isset( $_GET['preview'] ) && 'true' === $_GET['preview'];
 		// phpcs:enable WordPress.Security.NonceVerification
-
-		return $apercu
-			|| is_admin()
-			|| wp_doing_ajax()
-			|| ( defined( 'REST_REQUEST' ) && REST_REQUEST )
-			|| wp_is_json_request()
-			|| is_customize_preview();
 	}
 
 	public static function est_administrateur_connecte() {

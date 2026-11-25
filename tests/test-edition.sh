@@ -40,9 +40,23 @@ for cas in temoin temoin-preview-false et_fb app_window et_pb_preview et_pb_prev
   ECHECS=$((ECHECS + $(grep -c '^FAIL - .* :' <<<"$SORTIE")))
 done
 
+echo "--- les mêmes paramètres, sans droit de modifier : ignorés ---"
+wp user create il-abonne il-abonne@example.test --role=subscriber --porcelain >/dev/null
+ID_EDITEUR=$(wp user create il-editeur il-editeur@example.test --role=editor --porcelain)
+for qui in anonyme il-abonne; do
+  UTILISATEUR=(); [[ $qui == anonyme ]] || UTILISATEUR=(--user="$qui")
+  for cas in et_fb app_window et_pb_preview et_pb_preview-post et_pb_preview_nonce et_tb preview preview_id; do
+    SORTIE=$(wp "${UTILISATEUR[@]}" eval-file /var/www/html/wp-content/plugins/images-legeres/tests/edition.php "$cas" "$ID_PAGE" public 2>&1)
+    echo "$qui : $SORTIE"
+    grep -qE "^OK   - $cas : réécriture" <<<"$SORTIE" || verifier "$qui $cas : réécriture attendue" 1
+  done
+done
+
 echo "--- intégration HTTP ---"
-ENTETE=$(mktemp); trap 'rm -f "$ENTETE"' EXIT
-wp eval '$e = time() + 600; $j = WP_Session_Tokens::get_instance( 1 )->create( $e ); echo "Cookie: " . LOGGED_IN_COOKIE . "=" . wp_generate_auth_cookie( 1, $e, "logged_in", $j );' >"$ENTETE"
+ENTETE=$(mktemp); ENTETE_EDITEUR=$(mktemp); trap 'rm -f "$ENTETE" "$ENTETE_EDITEUR"' EXIT
+cookie() { wp eval '$e = time() + 600; $j = WP_Session_Tokens::get_instance( '"$1"' )->create( $e ); echo "Cookie: " . LOGGED_IN_COOKIE . "=" . wp_generate_auth_cookie( '"$1"', $e, "logged_in", $j );'; }
+cookie 1 >"$ENTETE"
+cookie "$ID_EDITEUR" >"$ENTETE_EDITEUR"
 
 # Sans suivre les redirections : une redirection qui ôterait le paramètre mesurerait la page publique.
 page() { curl -s "$@" "$BASE/?page_id=$ID_PAGE${SUFFIXE:-}"; }
@@ -56,6 +70,17 @@ done
 HTML=$(page -H @"$ENTETE")
 verifier "la requête authentifiée est bien celle d'un administrateur" \
   $(grep -q 'wpadminbar' <<<"$HTML" && echo 0 || echo 1)
+
+for suffixe in '&et_fb=1' '&et_fb=1&app_window=1' '&et_pb_preview=true' '&et_tb=1' '&preview_id=1'; do
+  HTML=$(SUFFIXE=$suffixe page)
+  verifier "anonyme $suffixe : frère .webp servi" $(grep -qF "$URL_SEULE.webp" <<<"$HTML" && echo 0 || echo 1)
+  verifier "anonyme $suffixe : harmonisée servie" $(grep -qF 'native-harmonisee-temoin.jpg' <<<"$HTML" && echo 0 || echo 1)
+done
+HTML=$(SUFFIXE='&et_fb=1' page -H @"$ENTETE_EDITEUR")
+verifier "éditeur connecté &et_fb=1 : session reconnue" $(grep -q 'wpadminbar' <<<"$HTML" && echo 0 || echo 1)
+verifier "éditeur connecté &et_fb=1 : adresse .jpg d'origine servie" $(grep -qF "$URL_SEULE\"" <<<"$HTML" && echo 0 || echo 1)
+verifier "éditeur connecté &et_fb=1 : ni .jpg.webp ni harmonisée" \
+  $(grep -qE '\.jpg\.webp|harmonisee-temoin' <<<"$HTML" && echo 1 || echo 0)
 
 # L'aperçu WordPress d'une page publiée est redirigé sans nonce : couvert cas par cas.
 for suffixe in '&et_fb=1' '&et_fb=1&app_window=1' '&et_pb_preview=true'; do
