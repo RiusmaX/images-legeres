@@ -200,12 +200,12 @@ class ImagesLegeres_Recadrage {
 	}
 
 	/**
-	 * Rend true si une pièce jointe rattachée à un produit est hors ratio cible et sans
+	 * Rend true si une photo produit (affichée par un produit) est hors ratio cible et sans
 	 * rectangle : état « à recadrer ». La marque « fond assumé » n'en dispense pas, ces
 	 * photos sont servies en carré centré comme les autres.
 	 */
 	public static function a_recadrer( $attachment_id ) {
-		if ( ! ImagesLegeres_Moteur::est_image_produit( $attachment_id ) ) {
+		if ( ! ImagesLegeres_Moteur::est_photo_produit( $attachment_id ) ) {
 			return false;
 		}
 

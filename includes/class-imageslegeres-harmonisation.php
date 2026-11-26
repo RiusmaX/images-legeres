@@ -296,7 +296,7 @@ class ImagesLegeres_Harmonisation {
 	}
 
 	/**
-	 * Pièces jointes à harmoniser par défaut : les images produit cadrées à la main (rectangle
+	 * Pièces jointes à harmoniser par défaut : les photos produit cadrées à la main (rectangle
 	 * posé ou marque « fond assumé »), et celles déjà harmonisées, pour que leurs carrés
 	 * suivent la règle de rendu courante (avant la 0.2.4, sans rectangle, un fond était
 	 * ajouté).
@@ -304,7 +304,7 @@ class ImagesLegeres_Harmonisation {
 	public static function ids_a_harmoniser() {
 		$ids = array();
 
-		foreach ( ImagesLegeres_Moteur::ids_images_produit() as $id ) {
+		foreach ( ImagesLegeres_Moteur::ids_photos_produit() as $id ) {
 			if ( null === ImagesLegeres_Recadrage::obtenir( $id )
 				&& ! ImagesLegeres_Recadrage::fond_assume( $id )
 				&& empty( ImagesLegeres_Harmonisees::par_attachment( $id ) ) ) {
@@ -330,7 +330,7 @@ class ImagesLegeres_Harmonisation {
 			return array( array( 'taille' => '', 'fichier' => '', 'etat' => 'ignore', 'motif' => 'harmonisation désactivée' ) );
 		}
 
-		if ( ! ImagesLegeres_Moteur::est_image_produit( $attachment_id ) ) {
+		if ( ! ImagesLegeres_Moteur::est_photo_produit( $attachment_id ) ) {
 			return array( array( 'taille' => '', 'fichier' => '', 'etat' => 'ignore', 'motif' => 'image hors produit' ) );
 		}
 

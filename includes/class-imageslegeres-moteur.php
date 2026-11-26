@@ -395,9 +395,9 @@ class ImagesLegeres_Moteur {
 	const TYPES_PRODUIT = array( 'product', 'product_variation' );
 
 	/**
-	 * Rend true si la pièce jointe est une image produit. Définition unique, partagée par le
-	 * choix de qualité (ADR 0007), le recadrage, `crop pending`, `alt missing`, les flux et la
-	 * file des lots : toute autre façon de reconnaître une image produit est un bogue.
+	 * Rend true si la pièce jointe est une image produit au sens LARGE : choix de qualité
+	 * (ADR 0007), flux et file des lots. Le recadrage, `crop pending` et l'harmonisation ne
+	 * visent que les photos affichées : voir `est_photo_produit()`.
 	 *
 	 * Une image est produit si elle est **rattachée** à un produit ou à une variation
 	 * (`post_parent`), **ou** si elle est **affichée** par l'un d'eux — image principale
@@ -490,6 +490,53 @@ class ImagesLegeres_Moteur {
 		global $wpdb;
 
 		return array_map( 'intval', (array) $wpdb->get_col( self::sql_images_produit() ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
+	/**
+	 * Vrai quand la pièce jointe est une photo produit : image principale ou galerie d'un
+	 * produit ou d'une variation. Définition unique du recadrage, de `crop pending` et de
+	 * l'harmonisation. Un fichier seulement rattaché par `post_parent` n'en est pas une : il
+	 * ne s'affiche nulle part (pictogrammes d'ingrédients, production du 2026-11-26).
+	 */
+	public static function est_photo_produit( $attachment_id ) {
+		global $wpdb;
+
+		$attachment_id = (int) $attachment_id;
+
+		return $attachment_id > 0 && (bool) $wpdb->get_var( self::sql_photos_produit( $attachment_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
+	/** Identifiants des photos produit du site (voir `est_photo_produit`), en une requête. */
+	public static function ids_photos_produit() {
+		global $wpdb;
+
+		return array_map( 'intval', (array) $wpdb->get_col( self::sql_photos_produit() ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
+	/**
+	 * Requête des photos produit, bornée à une pièce jointe quand `$attachment_id` est donné.
+	 * `FIND_IN_SET` compare des éléments entiers de la galerie, jamais des sous-chaînes.
+	 */
+	private static function sql_photos_produit( $attachment_id = 0 ) {
+		global $wpdb;
+
+		$types = self::types_produit_sql();
+		$image = "p.post_type = 'attachment' AND p.post_mime_type LIKE 'image/%'";
+
+		if ( $attachment_id ) {
+			$image .= ' AND p.ID = ' . (int) $attachment_id;
+		}
+
+		return "SELECT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} meta ON meta.meta_key = '_thumbnail_id' AND meta.meta_value = CAST( p.ID AS CHAR )
+				INNER JOIN {$wpdb->posts} porteur ON porteur.ID = meta.post_id AND porteur.post_type IN ({$types})
+				WHERE {$image}
+			UNION
+			SELECT p.ID FROM {$wpdb->posts} p
+				INNER JOIN {$wpdb->postmeta} galerie ON galerie.meta_key = '_product_image_gallery'
+					AND FIND_IN_SET( p.ID, REPLACE( galerie.meta_value, ' ', '' ) ) > 0
+				INNER JOIN {$wpdb->posts} porteur ON porteur.ID = galerie.post_id AND porteur.post_type IN ({$types})
+				WHERE {$image}";
 	}
 
 	/**

@@ -200,7 +200,7 @@ class ImagesLegeres_Cli_Crop {
 	}
 
 	/**
-	 * Liste les images produit hors ratio cible et sans rectangle (état « à recadrer »),
+	 * Liste les photos produit (image principale ou galerie) hors ratio cible et sans rectangle (état « à recadrer »),
 	 * marque « fond assumé » comprise.
 	 *
 	 * ## OPTIONS
@@ -214,7 +214,7 @@ class ImagesLegeres_Cli_Crop {
 	 * @when after_wp_load
 	 */
 	public function pending( $args, $assoc_args ) {
-		$ids = ImagesLegeres_Moteur::ids_images_produit();
+		$ids = ImagesLegeres_Moteur::ids_photos_produit();
 
 		$resultats = array();
 

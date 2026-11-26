@@ -251,6 +251,7 @@ class ImagesLegeres_Lot {
 			array(
 				ImagesLegeres_Moteur::fichiers_de_attachment( $attachment_id ),
 				ImagesLegeres_Moteur::est_image_produit( $attachment_id ),
+				ImagesLegeres_Moteur::est_photo_produit( $attachment_id ),
 			)
 		);
 	}
@@ -272,7 +273,7 @@ class ImagesLegeres_Lot {
 
 			if ( $auto
 				&& ImagesLegeres_Reglages::valeur( 'harmonisation_produit_active' )
-				&& ImagesLegeres_Moteur::est_image_produit( $attachment_id )
+				&& ImagesLegeres_Moteur::est_photo_produit( $attachment_id )
 				&& ! ImagesLegeres_Harmonisation::a_jour( $attachment_id ) ) {
 				$resultats = array_merge( $resultats, ImagesLegeres_Harmonisation::generer( $attachment_id ) );
 			}
