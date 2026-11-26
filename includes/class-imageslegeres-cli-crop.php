@@ -199,8 +199,8 @@ class ImagesLegeres_Cli_Crop {
 	}
 
 	/**
-	 * Liste les images produit hors ratio cible, sans rectangle ni marque « fond assumé »
-	 * (état « à recadrer », ADR 0005 point 5).
+	 * Liste les images produit hors ratio cible et sans rectangle (état « à recadrer »),
+	 * marque « fond assumé » comprise.
 	 *
 	 * ## OPTIONS
 	 *
