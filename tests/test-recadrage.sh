@@ -76,8 +76,10 @@ echo 'ok';
 " >/dev/null
 }
 
+# Rattache au produit témoin et pose en galerie : une photo produit est une image affichée.
+# Second argument « sans-galerie » : rattachement seul (`post_parent`).
 importer_et_rattacher() {
-  local chemin="$1"
+  local chemin="$1" mode="${2:-galerie}"
   local id
   id=$(wp eval "
 \$uploads = wp_upload_dir();
@@ -86,6 +88,11 @@ copy( '$chemin', \$dest );
 \$id = wp_insert_attachment( array( 'post_mime_type' => 'image/jpeg', 'post_title' => basename( '$chemin' ), 'post_status' => 'inherit', 'post_parent' => $ID_PRODUIT_WC ), \$dest );
 require_once ABSPATH . 'wp-admin/includes/image.php';
 wp_update_attachment_metadata( \$id, wp_generate_attachment_metadata( \$id, \$dest ) );
+if ( 'galerie' === '$mode' ) {
+  \$g = array_filter( explode( ',', (string) get_post_meta( $ID_PRODUIT_WC, '_product_image_gallery', true ) ) );
+  \$g[] = \$id;
+  update_post_meta( $ID_PRODUIT_WC, '_product_image_gallery', implode( ',', \$g ) );
+}
 echo \$id;
 " | tr -d '\r')
   echo "$id"
@@ -403,6 +410,35 @@ wp images-legeres harmoniser "$ID3" >/dev/null 2>&1
 RGB_APRES_RETAILLE=$(couleur_moyenne_harmonisee "$ID3" woocommerce_thumbnail)
 est_rouge "$RGB_APRES_RETAILLE"
 verifier "sous-taille toujours conforme après retaille 2560->1920 : la zone cadrée n'a pas bougé ($RGB_APRES_RETAILLE)" $?
+
+echo "--- pictogramme rattaché par post_parent seulement : pas une photo produit ---"
+creer_image_marqueurs /tmp/m-picto.jpg 900 1200 0 0 100 100
+ID_PICTO=$(importer_et_rattacher /tmp/m-picto.jpg sans-galerie)
+ID_GALERIE=$(importer_et_rattacher /tmp/m-picto.jpg)
+dans_pending() { wp images-legeres crop pending --format=json | grep -q "\"id\":$1,"; }
+verifier "pictogramme et image de galerie importés ($ID_PICTO, $ID_GALERIE)" $([[ "$ID_PICTO" =~ ^[0-9]+$ && "$ID_GALERIE" =~ ^[0-9]+$ ]] && echo 0 || echo 1)
+dans_pending "$ID_PICTO"
+verifier "crop pending ne liste pas le pictogramme" $([[ $? -ne 0 ]] && echo 0 || echo 1)
+dans_pending "$ID_GALERIE"
+verifier "crop pending liste l'image de galerie" $?
+# Même cadré à la main, le pictogramme reste hors harmonisation ; les flux, eux, le voient toujours.
+wp eval "ImagesLegeres_Recadrage::definir( $ID_PICTO, 0, 150, 900, 900 ); ImagesLegeres_Recadrage::definir( $ID_GALERIE, 0, 150, 900, 900 );" >/dev/null
+SELECTION=$(wp eval "\$s = ImagesLegeres_Harmonisation::ids_a_harmoniser(); echo (int) in_array( $ID_PICTO, \$s, true ) . ':' . (int) in_array( $ID_GALERIE, \$s, true );" | tr -d '\r')
+verifier "« harmoniser » sans identifiant : pictogramme exclu, galerie retenue (obtenu $SELECTION)" $([[ "$SELECTION" == "0:1" ]] && echo 0 || echo 1)
+wp images-legeres harmoniser "$ID_PICTO" "$ID_GALERIE" >/dev/null 2>&1
+RANGS=$(wp eval "echo count( ImagesLegeres_Harmonisees::par_attachment( $ID_PICTO ) ) . ':' . (int) ( count( ImagesLegeres_Harmonisees::par_attachment( $ID_GALERIE ) ) > 0 );" | tr -d '\r')
+verifier "pictogramme non harmonisé, image de galerie harmonisée (obtenu $RANGS)" $([[ "$RANGS" == "0:1" ]] && echo 0 || echo 1)
+PORTEE=$(wp eval "echo (int) ImagesLegeres_Moteur::est_image_produit( $ID_PICTO ) . ':' . (int) ImagesLegeres_Moteur::est_photo_produit( $ID_PICTO );" | tr -d '\r')
+verifier "pictogramme : toujours image produit pour flux et qualité, pas photo produit (obtenu $PORTEE)" $([[ "$PORTEE" == "1:0" ]] && echo 0 || echo 1)
+# Galerie d'un contenu qui n'est pas un produit, et variation en image principale.
+USAGES=$(wp eval "
+update_post_meta( wp_insert_post( array( 'post_type' => 'page', 'post_title' => 'galerie hors produit' ) ), '_product_image_gallery', '$ID_PICTO' );
+\$a = (int) ImagesLegeres_Moteur::est_photo_produit( $ID_PICTO );
+\$v = wp_insert_post( array( 'post_type' => 'product_variation', 'post_title' => 'variation', 'post_parent' => $ID_PRODUIT_WC, 'post_status' => 'publish' ) );
+update_post_meta( \$v, '_thumbnail_id', $ID_PICTO );
+echo \$a . ':' . (int) ImagesLegeres_Moteur::est_photo_produit( $ID_PICTO );
+wp_delete_post( \$v, true );" | tr -d '\r')
+verifier "galerie d'une page ignorée, image d'une variation reconnue (obtenu $USAGES)" $([[ "$USAGES" == "0:1" ]] && echo 0 || echo 1)
 
 echo "---"
 if [[ "$ECHECS" -eq 0 ]]; then

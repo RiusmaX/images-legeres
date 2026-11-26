@@ -79,6 +79,12 @@ copy( '$chemin', \$dest );
 \$id = wp_insert_attachment( array( 'post_mime_type' => 'image/jpeg', 'post_title' => basename( \$dest ), 'post_status' => 'inherit', 'post_parent' => $parent ), \$dest );
 require_once ABSPATH . 'wp-admin/includes/image.php';
 wp_update_attachment_metadata( \$id, wp_generate_attachment_metadata( \$id, \$dest ) );
+// Sur un produit, l'image est aussi posée en galerie : seule une image affichée se recadre.
+if ( 'product' === get_post_type( $parent ) ) {
+  \$g = array_filter( explode( ',', (string) get_post_meta( $parent, '_product_image_gallery', true ) ) );
+  \$g[] = \$id;
+  update_post_meta( $parent, '_product_image_gallery', implode( ',', \$g ) );
+}
 echo \$id;
 " | tr -d '\r'
 }

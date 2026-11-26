@@ -206,6 +206,95 @@ read -r REPLI_RETENUE REPLI_ATTENDU <<<"$REPLI"
 verifier "sans harmonisée sous le plafond, la PLUS PETITE au-dessus est retenue (retenue $REPLI_RETENUE, attendue $REPLI_ATTENDU)" \
   $([[ "$REPLI_RETENUE" -eq "$REPLI_ATTENDU" && "$REPLI_RETENUE" -gt 0 ]] && echo 0 || echo 1)
 
+echo "--- cas 7 : original déjà en WebP, portrait 3:4, avec puis sans rectangle ---"
+BASE="http://localhost:${IL_HTTP_PORT:-8081}"
+# Bleu au centre, vert sur les 150 px du haut et du bas : le carré centré est tout bleu, le
+# carré cadré en haut (y = 0) garde le vert en haut.
+creer_webp() {
+  wp eval "
+\$produit = wp_insert_post( array( 'post_type' => 'product', 'post_title' => 'Bougie WebP $1 ${RUN_ID}', 'post_status' => 'publish' ) );
+\$i = new Imagick();
+\$i->newImage( 900, 1200, new ImagickPixel( 'blue' ) );
+\$d = new ImagickDraw();
+\$d->setFillColor( new ImagickPixel( 'green' ) );
+\$d->rectangle( 0, 0, 899, 149 );
+\$d->rectangle( 0, 1050, 899, 1199 );
+\$i->drawImage( \$d );
+\$i->setImageFormat( 'webp' );
+\$u = wp_upload_dir();
+\$dest = trailingslashit( \$u['path'] ) . 'webp-$1-${RUN_ID}.webp';
+\$i->writeImage( \$dest );
+\$id = wp_insert_attachment( array( 'post_mime_type' => 'image/webp', 'post_title' => 'webp $1', 'post_status' => 'inherit', 'post_parent' => \$produit ), \$dest );
+require_once ABSPATH . 'wp-admin/includes/image.php';
+wp_update_attachment_metadata( \$id, wp_generate_attachment_metadata( \$id, \$dest ) );
+set_post_thumbnail( \$produit, \$id );
+wp_update_post( array( 'ID' => \$produit, 'post_content' => wp_get_attachment_image( \$id, 'woocommerce_single' ) ) );
+echo \$produit . ' ' . \$id;
+" | tr -d '\r'
+}
+
+# « ok:<rangs>:<plus grand côté>:<haut>:<bas> » : chaque carré est un WebP, aux dimensions
+# inventoriées, sans frère ; couleurs relevées sur le plus grand.
+carres_webp() {
+  wp eval "
+\$u = wp_upload_dir(); \$b = trailingslashit( \$u['basedir'] ); \$ko = array(); \$max = 0; \$grand = '';
+\$l = ImagesLegeres_Harmonisees::par_attachment( $1 );
+foreach ( \$l as \$r ) {
+  \$f = \$b . \$r['chemin_harmonise']; \$m = @getimagesize( \$f );
+  if ( ! \$m || 'image/webp' !== \$m['mime'] || '.webp' !== substr( \$f, -5 ) || \$m[0] !== \$m[1] || \$m[0] !== (int) \$r['largeur'] || file_exists( \$f . '.webp' ) ) { \$ko[] = \$r['taille']; continue; }
+  if ( \$m[0] > \$max ) { \$max = \$m[0]; \$grand = \$f; }
+}
+if ( ! \$l || \$ko ) { echo 'ko:' . implode( ',', \$ko ); return; }
+\$i = new Imagick( \$grand );
+\$teinte = function ( \$y ) use ( \$i, \$max ) { \$c = \$i->getImagePixelColor( 5, \$y )->getColor(); return \$c['b'] > 180 && \$c['g'] < 80 ? 'bleu' : ( \$c['g'] > 90 && \$c['b'] < 80 ? 'vert' : 'autre' ); };
+echo 'ok:' . count( \$l ) . ':' . \$max . ':' . \$teinte( 5 ) . ':' . \$teinte( \$max - 6 );" | tr -d '\r'
+}
+
+# Adresses d'images des balises <img> de la fiche qui désignent ce fichier.
+adresses_de_la_page() {
+  curl -s "$BASE/?post_type=product&p=$1" | grep -oE '<img[^>]*>' \
+    | grep -oE '(src|srcset|data-src|data-large_image)="[^"]*"' | cut -d'"' -f2 \
+    | tr ',' '\n' | awk '{print $1}' | grep "/$2" | sort -u
+}
+
+verifier_page_webp() {
+  local produit="$1" nom="$2" cas="$3" adresses natives code
+  adresses=$(adresses_de_la_page "$produit" "$nom")
+  natives=$(echo "$adresses" | grep -vc -- '-il-harmonise-[0-9]*x[0-9]*\.webp$' || true)
+  verifier "$cas : la fiche sert les carrés WebP et eux seuls ($(echo "$adresses" | grep -c . ) adresse(s), $natives autre(s))" \
+    $([[ -n "$adresses" && "$natives" -eq 0 ]] && echo 0 || echo 1)
+  code=$(curl -s -o /dev/null -w '%{http_code}:%{content_type}' "$(echo "$adresses" | head -1)")
+  verifier "$cas : le carré servi répond (obtenu $code)" $([[ "$code" == "200:image/webp" ]] && echo 0 || echo 1)
+}
+
+wp eval 'ImagesLegeres_Reglages::enregistrer(array("mode_apercu_actif" => false));' >/dev/null
+read -r P_CADRE I_CADRE <<<"$(creer_webp cadre)"
+read -r P_CENTRE I_CENTRE <<<"$(creer_webp centre)"
+wp eval "ImagesLegeres_Recadrage::definir( $I_CADRE, 0, 0, 900, 900 );" >/dev/null
+wp images-legeres convert "$I_CADRE" "$I_CENTRE" >/dev/null 2>&1
+SORTIE=$(wp images-legeres harmoniser "$I_CADRE" "$I_CENTRE" 2>&1)
+verifier "original WebP : plus ignoré par l'harmonisation" $(echo "$SORTIE" | grep -q 'déjà au format webp' && echo 1 || echo 0)
+
+CADRE=$(carres_webp "$I_CADRE")
+verifier "avec rectangle : carrés WebP aux bonnes dimensions, zone cadrée (obtenu $CADRE)" \
+  $([[ "$CADRE" =~ ^ok:[0-9]+:[0-9]+:vert:bleu$ ]] && echo 0 || echo 1)
+CENTRE=$(carres_webp "$I_CENTRE")
+verifier "sans rectangle : carrés WebP centrés, aucune bande (obtenu $CENTRE)" \
+  $([[ "$CENTRE" =~ ^ok:[0-9]+:[0-9]+:bleu:bleu$ ]] && echo 0 || echo 1)
+
+verifier_page_webp "$P_CADRE" "webp-cadre-" "avec rectangle"
+verifier_page_webp "$P_CENTRE" "webp-centre-" "sans rectangle"
+
+SUITE=$(wp eval "
+echo (int) ImagesLegeres_Harmonisation::a_jour( $I_CADRE ) . ':' . (int) ImagesLegeres_Harmonisation::a_jour( $I_CENTRE )
+  . ':' . count( array_intersect( array( $I_CADRE, $I_CENTRE ), ImagesLegeres_Harmonisation::ids_webp_manquant() ) )
+  . ':' . ImagesLegeres_Moteur::motif_exclusion( get_attached_file( $I_CADRE ) );" | tr -d '\r')
+verifier "à jour, rien à rattraper, conversion générale toujours ignorée (obtenu $SUITE)" \
+  $([[ "$SUITE" == "1:1:0:déjà au format webp" ]] && echo 0 || echo 1)
+
+for i in "$I_CADRE" "$I_CENTRE"; do wp post delete "$i" --force >/dev/null 2>&1; done
+for i in "$P_CADRE" "$P_CENTRE"; do wp post delete "$i" --force >/dev/null 2>&1; done
+
 echo "--- nettoyage ---"
 wp eval "ImagesLegeres_Harmonisation::supprimer( $ID_IMAGE );" >/dev/null 2>&1
 wp post delete "$ID_IMAGE" --force >/dev/null 2>&1
