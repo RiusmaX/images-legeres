@@ -178,6 +178,11 @@ verifier "crop import a posé le rectangle valide" $?
 JSON_IMG3=$(wp images-legeres crop get "$ID_IMG3" --format=json)
 echo "$JSON_IMG3" | grep -q '"fond_assume":true'
 verifier "crop import a marqué fond_assume" $?
+wp images-legeres crop pending --format=json | python3 -c "
+import json,sys
+l=[x for x in json.load(sys.stdin) if x['id']==$ID_IMG3]
+sys.exit(0 if len(l)==1 and list(l[0])==['id','adresse','largeur','hauteur','ratio','produit'] else 1)"
+verifier "crop pending liste la photo fond_assume, au même format JSON" $?
 
 echo "--- alt missing : image produit sans alt listée ---"
 JSON_ALT=$(wp images-legeres alt missing --format=json)
@@ -225,7 +230,7 @@ verifier "flux check n'inclut pas l'image fond_assume 900x1200 (plus grand côt�
 
 echo "--- flux check : image produit minuscule (400x300, sans rectangle) listée avec motif ---"
 # crop set refuse lui-même un carré < 500 px (même garde-fou, ADR 0005) : pour exercer le
-# plancher de flux check, on part d'une image dont le repli « fond ajouté » (plus grand
+# plancher de flux check, on part d'une image dont le repli de flux « fond ajouté » (plus grand
 # côté de l'original) est déjà sous 500 px, sans poser de rectangle.
 TMP_IMG4=$(mktemp --suffix=.jpg)
 creer_image "$TMP_IMG4" 400 300

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test de l'harmonisation produit par recadrage (mission 15, revue F5) : méta
-# `_images_legeres_crop`, primitives de rendu, repli « fond ajouté », survie du rectangle à
+# `_images_legeres_crop`, primitives de rendu, repli « carré centré », survie du rectangle à
 # une retaille.
 #
 # Depuis F5, l'harmonisation n'écrit plus sous le nom de fichier natif : elle produit des
@@ -208,18 +208,20 @@ verifier "harmonisée de la fiche produit carrée (obtenu $DIM_SINGLE)" $([[ -n 
 NATIF_SINGLE=$(wp eval "\$m = wp_get_attachment_metadata($ID1); echo \$m['sizes']['woocommerce_single']['width'] . 'x' . \$m['sizes']['woocommerce_single']['height'];" | tr -d '\r')
 verifier "woocommerce_single natif laissé tel que WooCommerce le déclare (obtenu $NATIF_SINGLE)" $([[ "$NATIF_SINGLE" != "" ]] && echo 0 || echo 1)
 
-echo "--- sans rectangle : fond ajouté, jamais de recadrage ---"
+echo "--- sans rectangle : carré centré, aucune bande ajoutée ---"
 IMG2=/tmp/marqueurs-2-${RUN_ID}.jpg
-# Photo 3:4 (900x1200) : bande rouge en haut (0-100px) et en bas (1100-1200px), bleu au
-# centre. Un recadrage centré couperait les deux bandes ; un fond ajouté les garde visibles.
+# Photo 3:4 (900x1200). Le carré centré va de y=150 à y=1049 : moitié gauche verte, moitié
+# droite bleue. Au-dessus et en dessous, du rouge, qui doit disparaître. Un fond ajouté
+# garderait le rouge et poserait une couleur unie sur les côtés.
 wp eval "
 \$i = new Imagick();
-\$i->newImage( 900, 1200, new ImagickPixel( 'blue' ) );
+\$i->newImage( 900, 1200, new ImagickPixel( 'red' ) );
 \$i->setImageFormat( 'jpeg' );
 \$d = new ImagickDraw();
-\$d->setFillColor( new ImagickPixel( 'red' ) );
-\$d->rectangle( 0, 0, 899, 99 );
-\$d->rectangle( 0, 1100, 899, 1199 );
+\$d->setFillColor( new ImagickPixel( '#00ff00' ) );
+\$d->rectangle( 0, 150, 449, 1049 );
+\$d->setFillColor( new ImagickPixel( 'blue' ) );
+\$d->rectangle( 450, 150, 899, 1049 );
 \$i->drawImage( \$d );
 \$i->writeImage( '$IMG2' );
 echo 'ok';
@@ -230,56 +232,76 @@ verifier "import image sans rectangle" $([[ "$ID2" =~ ^[0-9]+$ ]] && echo 0 || e
 AVANT=$(wp eval "echo ImagesLegeres_Recadrage::obtenir( $ID2 ) === null ? 'null' : 'pose';" | tr -d '\r')
 verifier "aucun rectangle posé au départ" $([[ "$AVANT" == "null" ]] && echo 0 || echo 1)
 
+# Pour chaque harmonisée de la pièce jointe : carrée, et sur ses quatre bords les couleurs
+# de la photo (vert à gauche, bleu à droite, les deux en haut et en bas). Rend « ok:<n> ».
+bords_de_la_photo() {
+  wp eval "
+\$u = wp_upload_dir(); \$n = 0; \$ko = array();
+\$proche = function ( \$c, \$v, \$b ) { return \$c['r'] < 60 && abs( \$c['g'] - \$v ) < 60 && abs( \$c['b'] - \$b ) < 60; };
+foreach ( ImagesLegeres_Harmonisees::par_attachment( $1 ) as \$ligne ) {
+  \$img = new Imagick( trailingslashit( \$u['basedir'] ) . \$ligne['chemin_harmonise'] );
+  \$l = \$img->getImageWidth(); \$h = \$img->getImageHeight(); \$n++;
+  if ( \$l !== \$h ) { \$ko[] = \$ligne['taille'] . ' non carrée'; continue; }
+  foreach ( array( 0, 1, (int) ( \$h / 2 ), \$h - 2, \$h - 1 ) as \$y ) {
+    if ( ! \$proche( \$img->getImagePixelColor( 0, \$y )->getColor(), 255, 0 ) ) { \$ko[] = \$ligne['taille'] . ' bord gauche y=' . \$y; }
+    if ( ! \$proche( \$img->getImagePixelColor( \$l - 1, \$y )->getColor(), 0, 255 ) ) { \$ko[] = \$ligne['taille'] . ' bord droit y=' . \$y; }
+  }
+  foreach ( array( 0, \$h - 1 ) as \$y ) {
+    if ( ! \$proche( \$img->getImagePixelColor( (int) ( \$l / 4 ), \$y )->getColor(), 255, 0 ) || ! \$proche( \$img->getImagePixelColor( (int) ( 3 * \$l / 4 ), \$y )->getColor(), 0, 255 ) ) { \$ko[] = \$ligne['taille'] . ' bord horizontal y=' . \$y; }
+  }
+}
+echo ( \$n && ! \$ko ) ? 'ok:' . \$n : 'ko:' . implode( ', ', \$ko );
+" | tr -d '\r'
+}
+
 wp media regenerate "$ID2" --yes >/dev/null 2>&1
+
+# Un carré « grand » d'avant la 0.2.4 (côté 1200, avec fond) : il doit disparaître.
+PERIMEE=$(wp eval "
+\$u = wp_upload_dir();
+\$o = get_attached_file( $ID2 );
+\$f = ImagesLegeres_Harmonisation::chemin_harmonise( \$o, 1200, 1200 );
+copy( \$o, \$f ); copy( \$o, \$f . '.webp' );
+ImagesLegeres_Harmonisees::enregistrer( array( 'attachment_id' => $ID2, 'taille' => 'images_legeres_grande', 'chemin_natif' => ImagesLegeres_Moteur::chemin_relatif( \$o ), 'chemin_harmonise' => ImagesLegeres_Moteur::chemin_relatif( \$f ), 'largeur' => 1200, 'hauteur' => 1200 ) );
+echo \$f;
+" | tr -d '\r')
+
 wp images-legeres harmoniser "$ID2" >/dev/null 2>&1
 
-# Avec un fond ajouté, la photo entière (ratio 3:4) tient à l'échelle dans le carré : sa
-# largeur à l'échelle vaut 300 px sur une sous-taille de 300x300, sa hauteur 300 px — donc
-# AUCUNE bande de fond sur les côtés verticaux pour une image plus haute que large une fois
-# mise au même ratio que le carré... en réalité l'image (900x1200, 3:4) est plus étroite que
-# haute : à l'échelle dans un carré 300x300, elle est redimensionnée à 225x300 (centrée en
-# largeur), donc deux bandes de fond verticales de part et d'autre. Les bandes rouges du haut
-# et du bas de la photo doivent rester visibles (pas de recadrage) : on les retrouve à ~0-25px
-# et ~275-300px de hauteur, sur la colonne centrale.
-VERIF_FOND=$(wp eval "
-\$chemin = '';
-foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID2 ) as \$l ) { if ( 'woocommerce_thumbnail' === \$l['taille'] ) { \$u = wp_upload_dir(); \$chemin = trailingslashit( \$u['basedir'] ) . \$l['chemin_harmonise']; } }
-\$img = new Imagick( \$chemin );
-\$l = \$img->getImageWidth();
-\$h = \$img->getImageHeight();
-\$cx = (int) round( \$l / 2 );
-\$haut = \$img->getImagePixelColor( \$cx, (int) round( \$h * 0.02 ) )->getColor();
-\$bas  = \$img->getImagePixelColor( \$cx, (int) round( \$h * 0.98 ) )->getColor();
-\$milieu = \$img->getImagePixelColor( \$cx, (int) round( \$h / 2 ) )->getColor();
-echo \$haut['r'] . ',' . \$haut['g'] . ',' . \$haut['b'] . '|';
-echo \$bas['r'] . ',' . \$bas['g'] . ',' . \$bas['b'] . '|';
-echo \$milieu['r'] . ',' . \$milieu['g'] . ',' . \$milieu['b'];
-" | tr -d '\r')
-HAUT="${VERIF_FOND%%|*}"
-RESTE="${VERIF_FOND#*|}"
-BAS="${RESTE%%|*}"
-MILIEU="${RESTE##*|}"
-est_rouge "$HAUT"
-OK_HAUT=$?
-est_rouge "$BAS"
-OK_BAS=$?
-est_bleu "$MILIEU"
-OK_MILIEU=$?
-if [[ "$OK_HAUT" -eq 0 && "$OK_BAS" -eq 0 && "$OK_MILIEU" -eq 0 ]]; then
-  verifier "fond ajouté : bande du haut ($HAUT) et du bas ($BAS) visibles, centre bleu ($MILIEU) — rien n'est coupé" 0
-else
-  verifier "fond ajouté : bande du haut ($HAUT) et du bas ($BAS) visibles, centre bleu ($MILIEU) — rien n'est coupé" 1
-fi
+BORDS=$(bords_de_la_photo "$ID2")
+verifier "sans rectangle : harmonisées carrées, bords = pixels de la photo, aucune bande ($BORDS)" $([[ "$BORDS" == ok:* ]] && echo 0 || echo 1)
+
+RESTE_PERIMEE=$(wp eval "
+\$n = 0; foreach ( ImagesLegeres_Harmonisees::par_attachment( $ID2 ) as \$l ) { if ( 1200 === (int) \$l['largeur'] ) { \$n++; } }
+echo \$n . ':' . (int) file_exists( '$PERIMEE' ) . ':' . (int) file_exists( '$PERIMEE.webp' );" | tr -d '\r')
+verifier "ancien carré « grand » avec fond : rang et fichiers retirés (obtenu $RESTE_PERIMEE)" $([[ "$RESTE_PERIMEE" == "0:0:0" ]] && echo 0 || echo 1)
+
+GRANDE=$(wp eval "
+\$t = ImagesLegeres_Harmonisation::taille_grande( get_attached_file( $ID2 ), null, array() ); echo \$t[0] . 'x' . \$t[1];" | tr -d '\r')
+verifier "sans rectangle : le plus grand carré sans agrandir fait le petit côté (obtenu $GRANDE)" $([[ "$GRANDE" == "900x900" ]] && echo 0 || echo 1)
 
 APRES=$(wp eval "echo ImagesLegeres_Recadrage::obtenir( $ID2 ) === null ? 'null' : 'pose';" | tr -d '\r')
-verifier "toujours aucun rectangle : le fond ajouté n'en pose pas lui-même" $([[ "$APRES" == "null" ]] && echo 0 || echo 1)
+verifier "toujours aucun rectangle : le carré centré n'en pose pas lui-même" $([[ "$APRES" == "null" ]] && echo 0 || echo 1)
 
-echo "--- fond assumé : marqué, pas de rectangle, toujours fond ajouté ---"
+PAR_DEFAUT=$(wp eval "echo in_array( $ID2, ImagesLegeres_Harmonisation::ids_a_harmoniser(), true ) ? '1' : '0';" | tr -d '\r')
+verifier "« harmoniser » sans identifiant reprend une photo déjà harmonisée sans rectangle" $([[ "$PAR_DEFAUT" == "1" ]] && echo 0 || echo 1)
+
+echo "--- fond assumé : marqué, pas de rectangle, carré centré aussi ---"
 wp eval "echo ImagesLegeres_Recadrage::marquer_fond_assume( $ID2, 'aucun carré ne contient le produit entier' ) ? 'ok' : 'echec';" >/dev/null
 EST_FOND_ASSUME=$(wp eval "echo ImagesLegeres_Recadrage::fond_assume( $ID2 ) ? '1' : '0';" | tr -d '\r')
 verifier "fond_assume() rend vrai après marquage" $([[ "$EST_FOND_ASSUME" == "1" ]] && echo 0 || echo 1)
 TOUJOURS_SANS_RECTANGLE=$(wp eval "echo ImagesLegeres_Recadrage::obtenir( $ID2 ) === null ? 'null' : 'pose';" | tr -d '\r')
 verifier "fond_assume n'écrit pas de rectangle (obtenir() reste null)" $([[ "$TOUJOURS_SANS_RECTANGLE" == "null" ]] && echo 0 || echo 1)
+wp images-legeres harmoniser "$ID2" >/dev/null 2>&1
+BORDS_ASSUME=$(bords_de_la_photo "$ID2")
+verifier "fond assumé : carré centré, aucune bande ($BORDS_ASSUME)" $([[ "$BORDS_ASSUME" == ok:* ]] && echo 0 || echo 1)
+
+FLUX=$(wp eval "
+\$r = ImagesLegeres_Flux::generer( $ID2 );
+\$img = new Imagick( ImagesLegeres_Flux::dossier_absolu() . \$r['chemin'] );
+\$c = \$img->getImagePixelColor( (int) ( \$img->getImageWidth() / 4 ), 2 )->getColor();
+echo \$r['dimension'] . ':' . ( \$c['r'] > 180 && \$c['g'] < 80 ? 'entiere' : 'coupee' );" | tr -d '\r')
+verifier "flux inchangés : photo entière sur fond, côté 1200 (obtenu $FLUX)" $([[ "$FLUX" == "1200:entiere" ]] && echo 0 || echo 1)
 
 echo "--- rectangle refusé : hors image, mauvais ratio, trop petit ---"
 HORS_IMAGE=$(wp eval "echo is_wp_error( ImagesLegeres_Recadrage::definir( $ID1, 700, 700, 600, 600 ) ) ? 'refuse' : 'accepte';" | tr -d '\r')
