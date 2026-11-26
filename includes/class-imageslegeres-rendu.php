@@ -1,7 +1,7 @@
 <?php
 /**
- * Primitives de rendu d'une sous-taille harmonisée : recadrage exact sur un rectangle stocké,
- * ou fond ajouté (ADR 0003 point 2, ADR 0005 point 4). Opère sur un objet Imagick fourni par
+ * Primitives de rendu : recadrage sur un rectangle (stocké, ou centré à défaut) pour les
+ * sous-tailles harmonisées, fond ajouté (ADR 0003 point 2) pour les seules images de flux. Opère sur un objet Imagick fourni par
  * l'appelant ; n'ouvre, n'écrit et ne nomme aucun fichier — c'est le rôle de
  * `ImagesLegeres_Harmonisation`.
  *
@@ -70,6 +70,22 @@ class ImagesLegeres_Rendu {
 		$image->cropImage( $boite['largeur'], $boite['hauteur'], $boite['x'], $boite['y'] );
 		$image->setImagePage( 0, 0, 0, 0 );
 		$image->resizeImage( $largeur_cible, $hauteur_cible, Imagick::FILTER_LANCZOS, 1 );
+	}
+
+	/**
+	 * Rectangle relatif centré, le plus grand que l'image contient au ratio donné : le repli
+	 * d'une photo produit harmonisée tant qu'aucun cadrage n'est posé.
+	 */
+	public static function rectangle_centre( $largeur, $hauteur, $ratio ) {
+		$w = min( 1.0, ( $hauteur * $ratio ) / $largeur );
+		$h = min( 1.0, ( $largeur / $ratio ) / $hauteur );
+
+		return array(
+			'x' => ( 1 - $w ) / 2,
+			'y' => ( 1 - $h ) / 2,
+			'w' => $w,
+			'h' => $h,
+		);
 	}
 
 	/**

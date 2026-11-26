@@ -113,11 +113,11 @@ class ImagesLegeres_Harmonisation {
 	 * la plus grande taille déclarée déjà harmonisée.
 	 *
 	 * Rectangle posé : le carré est le rectangle lui-même, en pixels de l'original.
-	 * Fond assumé : l'original tient entier dans le cadre à son échelle native, le côté est
-	 * donc son plus grand côté (rapporté au ratio cible).
+	 * Sans rectangle : le carré centré, le plus grand que l'original contient (son petit
+	 * côté, rapporté au ratio cible).
 	 *
 	 * @param string     $original          chemin absolu du fichier de la pièce jointe
-	 * @param array|null $rectangle         rectangle relatif posé, ou null (fond ajouté)
+	 * @param array|null $rectangle         rectangle relatif posé, ou null (carré centré)
 	 * @param array      $tailles_declarees nom => array( largeur, hauteur ) déjà retenues
 	 *
 	 * @return array|null array( largeur, hauteur ) ou null
@@ -161,7 +161,7 @@ class ImagesLegeres_Harmonisation {
 		if ( is_array( $rectangle ) && ! empty( $rectangle['w'] ) ) {
 			$largeur = (int) floor( (float) $rectangle['w'] * (int) $mesure[0] );
 		} else {
-			$largeur = (int) max( (int) $mesure[0], round( (int) $mesure[1] * $ratio ) );
+			$largeur = (int) floor( min( (int) $mesure[0], (int) $mesure[1] * $ratio ) );
 		}
 
 		return $largeur < 1 ? null : array( $largeur, (int) max( 1, round( $largeur / $ratio ) ) );
@@ -296,15 +296,18 @@ class ImagesLegeres_Harmonisation {
 	}
 
 	/**
-	 * Pièces jointes à harmoniser par défaut : les images produit cadrées à la main
-	 * (rectangle posé ou fond assumé) et qui ne sont pas déjà au ratio cible. Les autres ne
-	 * gagnent rien à être harmonisées — leur sous-taille native est déjà au bon cadre.
+	 * Pièces jointes à harmoniser par défaut : les images produit cadrées à la main (rectangle
+	 * posé ou marque « fond assumé »), et celles déjà harmonisées, pour que leurs carrés
+	 * suivent la règle de rendu courante (avant la 0.2.4, sans rectangle, un fond était
+	 * ajouté).
 	 */
 	public static function ids_a_harmoniser() {
 		$ids = array();
 
 		foreach ( ImagesLegeres_Moteur::ids_images_produit() as $id ) {
-			if ( null === ImagesLegeres_Recadrage::obtenir( $id ) && ! ImagesLegeres_Recadrage::fond_assume( $id ) ) {
+			if ( null === ImagesLegeres_Recadrage::obtenir( $id )
+				&& ! ImagesLegeres_Recadrage::fond_assume( $id )
+				&& empty( ImagesLegeres_Harmonisees::par_attachment( $id ) ) ) {
 				continue;
 			}
 
@@ -346,6 +349,7 @@ class ImagesLegeres_Harmonisation {
 		$resultats = array();
 
 		$tailles = self::tailles_pour( $original, $rectangle, $metadata );
+		$ecrits  = array();
 		$maj     = current_time( 'mysql', true ); // Une seule date par génération.
 
 		foreach ( $tailles as $nom => $dimensions ) {
@@ -379,7 +383,9 @@ class ImagesLegeres_Harmonisation {
 				)
 			);
 
-			$motif = $rectangle ? 'recadrage' : 'fond ajouté';
+			$ecrits[ (string) $nom ] = ImagesLegeres_Moteur::chemin_relatif( $destination );
+
+			$motif = $rectangle ? 'recadrage' : 'carré centré';
 
 			// Le frère .webp de l'harmonisée passe par le moteur : même seuil, même trace
 			// dans ImagesLegeres_Table, donc vu par « Tout rendre » et par `orphelins`.
@@ -402,11 +408,54 @@ class ImagesLegeres_Harmonisation {
 			$resultats[] = array( 'taille' => $nom, 'fichier' => wp_basename( $destination ), 'etat' => 'fait', 'motif' => $motif );
 		}
 
+		// Seulement quand tout est écrit : après un échec, l'ancienne grande reste servie.
+		if ( ! $dry_run && count( $ecrits ) === count( $tailles ) ) {
+			self::retirer_grande_perimee( $attachment_id, $ecrits );
+		}
+
 		if ( empty( $resultats ) ) {
 			$resultats[] = array( 'taille' => '', 'fichier' => '', 'etat' => 'ignore', 'motif' => 'aucune taille déclarée au ratio cible' );
 		}
 
 		return $resultats;
+	}
+
+	/**
+	 * Les dimensions du carré « grand » dépendent du cadrage : quand il change, l'ancien rang
+	 * resterait inventorié et, s'il est plus large, servi à l'agrandissement. Son fichier
+	 * n'est supprimé que si plus aucun rang ne le désigne.
+	 *
+	 * @param int   $attachment_id pièce jointe régénérée
+	 * @param array $ecrits        nom de taille => chemin relatif, tout juste écrits
+	 */
+	private static function retirer_grande_perimee( $attachment_id, array $ecrits ) {
+		$uploads = wp_get_upload_dir();
+		$basedir = $uploads['basedir'];
+
+		foreach ( ImagesLegeres_Harmonisees::par_attachment( $attachment_id ) as $ligne ) {
+			$chemin = $ligne['chemin_harmonise'];
+
+			if ( self::TAILLE_GRANDE !== $ligne['taille']
+				|| ( isset( $ecrits[ self::TAILLE_GRANDE ] ) && $ecrits[ self::TAILLE_GRANDE ] === $chemin ) ) {
+				continue;
+			}
+
+			ImagesLegeres_Harmonisees::supprimer_ligne( $ligne['id'] );
+
+			if ( in_array( $chemin, $ecrits, true ) || ImagesLegeres_Harmonisees::est_reference( $chemin ) ) {
+				continue;
+			}
+
+			$absolu = trailingslashit( $basedir ) . $chemin;
+
+			foreach ( array( $absolu, $absolu . '.webp' ) as $fichier ) {
+				if ( ImagesLegeres_Moteur::sous_uploads( $fichier ) && file_exists( $fichier ) ) {
+					wp_delete_file_from_directory( $fichier, $basedir );
+				}
+			}
+
+			ImagesLegeres_Table::supprimer_par_chemin( $chemin );
+		}
 	}
 
 	/**
@@ -448,9 +497,9 @@ class ImagesLegeres_Harmonisation {
 	}
 
 	/**
-	 * Écrit un fichier harmonisé depuis l'original, par recadrage si un rectangle est posé,
-	 * par fond ajouté sinon (ADR 0005 point 4). Écriture atomique. Rend '' si tout va bien,
-	 * le motif d'erreur sinon.
+	 * Écrit un fichier harmonisé depuis l'original, par recadrage sur le rectangle posé, sur
+	 * le carré centré sinon : jamais de fond ajouté. Écriture atomique. Rend '' si tout va
+	 * bien, le motif d'erreur sinon.
 	 */
 	private static function ecrire( $original, $destination, $rectangle, $largeur, $hauteur ) {
 		$tmp = '';
@@ -458,11 +507,15 @@ class ImagesLegeres_Harmonisation {
 		try {
 			$image = new Imagick( $original );
 
-			if ( $rectangle ) {
-				ImagesLegeres_Rendu::appliquer_recadrage( $image, $rectangle, $largeur, $hauteur );
-			} else {
-				ImagesLegeres_Rendu::appliquer_fond_ajoute( $image, $largeur, $hauteur );
+			if ( ! $rectangle ) {
+				$rectangle = ImagesLegeres_Rendu::rectangle_centre(
+					$image->getImageWidth(),
+					$image->getImageHeight(),
+					ImagesLegeres_Recadrage::ratio_cible_numerique()
+				);
 			}
+
+			ImagesLegeres_Rendu::appliquer_recadrage( $image, $rectangle, $largeur, $hauteur );
 
 			// Qualité d'encodage alignée sur celle des sous-tailles natives de WordPress :
 			// sans ce réglage, Imagick reprend celle de la source (92 et plus sur une photo

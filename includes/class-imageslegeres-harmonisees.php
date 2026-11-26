@@ -190,6 +190,23 @@ class ImagesLegeres_Harmonisees {
 		);
 	}
 
+	public static function supprimer_ligne( $id ) {
+		global $wpdb;
+
+		$wpdb->delete( self::nom(), array( 'id' => (int) $id ) );
+	}
+
+	/** Vrai tant qu'un rang, de n'importe quelle pièce jointe, désigne ce fichier. */
+	public static function est_reference( $chemin_harmonise ) {
+		global $wpdb;
+
+		$table = self::nom();
+
+		return (bool) $wpdb->get_var(
+			$wpdb->prepare( "SELECT id FROM {$table} WHERE chemin_harmonise = %s LIMIT 1", $chemin_harmonise ) // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		);
+	}
+
 	public static function supprimer_lignes_attachment( $attachment_id ) {
 		global $wpdb;
 

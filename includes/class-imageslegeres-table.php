@@ -187,6 +187,14 @@ class ImagesLegeres_Table {
 		return (int) $wpdb->delete( self::nom(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
 	}
 
+	public static function supprimer_par_chemin( $chemin ) {
+		global $wpdb;
+
+		if ( self::existe() ) {
+			$wpdb->delete( self::nom(), array( 'chemin' => (string) $chemin ), array( '%s' ) );
+		}
+	}
+
 	public static function vider() {
 		global $wpdb;
 
