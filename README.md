@@ -4,7 +4,7 @@ Extension WordPress qui convertit les images en WebP, retaille les originaux sur
 harmonise les photos produit WooCommerce au ratio cible et sert la même photo aux flux
 Google et Meta. Aucune dépendance réseau, aucune clé, aucun appel à un service externe.
 
-**Version 0.2.3.** Requiert WordPress 6.0 et PHP 8.1.
+**Version 0.2.4.** Requiert WordPress 6.0 et PHP 8.1.
 
 ## Installation
 
@@ -42,8 +42,8 @@ Rien ne reste en ligne à une adresse dérivable de l'adresse d'origine.
 
 Une boutique dont les photos n'ont pas toutes le même cadrage donne une grille de catalogue
 irrégulière. L'extension produit, **à côté** des sous-tailles de WordPress et sans jamais
-les remplacer, une sous-taille au ratio cible par recadrage sur le rectangle posé ou par
-ajout d'un fond, nommée `<nom>-il-harmonise-<L>x<H>.<ext>`.
+les remplacer, une sous-taille au ratio cible par recadrage sur le rectangle posé, ou sur
+le carré centré à défaut (jamais de fond ajouté), nommée `<nom>-il-harmonise-<L>x<H>.<ext>`.
 
 Trois conséquences voulues :
 
@@ -83,8 +83,8 @@ rectangle natif, qui est un autre cadrage que la photo affichée.
 
 Si aucune taille déclarée au ratio cible n'est assez large pour l'agrandissement,
 `harmoniser` produit en plus la taille `images_legeres_grande` : le plus grand carré que
-l'original donne **sans agrandir un seul pixel** (le rectangle posé en pixels, ou le plus
-grand côté de l'original en fond ajouté). Les tailles carrées déclarées par WordPress
+l'original donne **sans agrandir un seul pixel** (le rectangle posé en pixels, ou le petit
+côté de l'original sans rectangle). Les tailles carrées déclarées par WordPress
 (`1536x1536`, `2048x2048`) suffisent dans la plupart des cas, et rien n'est alors produit en
 plus. Après une mise à jour, régénérer :
 
@@ -167,7 +167,10 @@ métas, drop-ins, dossier `uploads/images-legeres`, et frères `.webp` encore pr
 `run` lance le lot hors serveur web (file Action Scheduler ou boucle WP-CLI synchrone),
 refuse de tourner hors plage horaire sauf `--forcer`.
 `harmoniser` produit les sous-tailles au ratio cible ; sans identifiant, il prend les images
-produit cadrées (rectangle posé ou fond assumé). `--dry-run` annonce ce qui serait écrit
+produit cadrées (rectangle posé ou marque « fond assumé ») et celles déjà harmonisées.
+Une photo sans rectangle reçoit le **carré centré** : aucun fond n'est ajouté sur la fiche
+produit, et `crop pending` la liste tant qu'aucun cadrage n'est posé (les images de flux
+Google et Meta, elles, gardent le fond ajouté). `--dry-run` annonce ce qui serait écrit
 sans rien écrire.
 
 `--webp-manquants` est le **rattrapage** : il ne traite que les pièces jointes dont au moins
@@ -253,8 +256,8 @@ affichée par l'un d'eux — image principale (`_thumbnail_id`) ou galerie
 fiche garde `post_parent = 0` : c'est le cas le plus courant sur un site réel, et elle compte.
 L'inverse — rattachée mais affichée nulle part — compte aussi.
 
-`crop pending` liste les images produit hors ratio cible sans rectangle ni marque « fond
-assumé » ; `crop import` pose un lot de rectangles depuis un fichier JSON (une entrée invalide
+`crop pending` liste les images produit hors ratio cible sans rectangle (marque « fond
+assumé » comprise) ; `crop import` pose un lot de rectangles depuis un fichier JSON (une entrée invalide
 est refusée seule, rien n'est écrit pour elle, code de sortie non nul si au moins un échec).
 `alt missing` liste les pièces jointes affichées sans texte alternatif — l'extension ne
 l'écrit jamais, poser le texte se fait avec `wp post meta update <id> _wp_attachment_image_alt

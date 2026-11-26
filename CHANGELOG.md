@@ -1,5 +1,20 @@
 # Journal des changements
 
+## 0.2.4
+
+- **Plus de bande de couleur autour d'une photo produit.** Sans rectangle de recadrage, la
+  photo harmonisée est désormais le carré centré, le plus grand que l'original contient, au
+  lieu de la photo entière sur un fond ajouté. Même chose pour les photos marquées « fond
+  assumé ». Un rectangle posé reste prioritaire, au rendu inchangé.
+- `crop pending` liste aussi les photos marquées « fond assumé » : elles restent à recadrer.
+  `crop import` accepte toujours cette marque.
+- `harmoniser` sans identifiant reprend aussi les photos déjà harmonisées. **À lancer après
+  la mise à jour**, puis vider les caches de pages : les carrés avec fond déjà écrits ne sont
+  pas refaits tout seuls.
+- Quand la taille du carré « grand » change, l'ancien est retiré (inventaire et fichiers) : il
+  ne reste pas servi à l'agrandissement.
+- Les images de flux Google et Meta ne changent pas.
+
 ## 0.2.3
 
 - **Plus aucune réécriture dans l'éditeur ni dans les aperçus.** L'éditeur visuel Divi
