@@ -14,6 +14,14 @@
 - Quand la taille du carré « grand » change, l'ancien est retiré (inventaire et fichiers) : il
   ne reste pas servi à l'agrandissement.
 - Les images de flux Google et Meta ne changent pas.
+- **Seule une image affichée par un produit est à recadrer et à harmoniser** (image
+  principale ou galerie d'un produit ou d'une variation). Les fichiers seulement rattachés au
+  produit, comme les pictogrammes d'ingrédients, sortent de `crop pending` et de
+  l'harmonisation. La qualité d'encodage et les flux les traitent comme avant.
+- **Les originaux déjà en WebP sont harmonisés** : carré écrit en WebP, sans fichier en
+  double, et servi dans la page (la réécriture reconnaît désormais les adresses `.webp`).
+  Auparavant ignorés (« déjà au format webp »), ils restaient dans leurs proportions
+  d'origine malgré un cadrage. La conversion WebP les ignore toujours.
 
 ## 0.2.3
 

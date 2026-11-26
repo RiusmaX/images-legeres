@@ -166,12 +166,14 @@ métas, drop-ins, dossier `uploads/images-legeres`, et frères `.webp` encore pr
 `uploads`) ; une liste vide signifie qu'il ne reste rien. `convert` traite une pièce jointe (conversion WebP, retaille si le réglage est actif).
 `run` lance le lot hors serveur web (file Action Scheduler ou boucle WP-CLI synchrone),
 refuse de tourner hors plage horaire sauf `--forcer`.
-`harmoniser` produit les sous-tailles au ratio cible ; sans identifiant, il prend les images
+`harmoniser` produit les sous-tailles au ratio cible ; sans identifiant, il prend les photos
 produit cadrées (rectangle posé ou marque « fond assumé ») et celles déjà harmonisées.
 Une photo sans rectangle reçoit le **carré centré** : aucun fond n'est ajouté sur la fiche
 produit, et `crop pending` la liste tant qu'aucun cadrage n'est posé (les images de flux
 Google et Meta, elles, gardent le fond ajouté). `--dry-run` annonce ce qui serait écrit
-sans rien écrire.
+sans rien écrire. Un original déjà en WebP est harmonisé comme les autres : ses carrés sont
+écrits en WebP, sans frère (un WebP animé est ignoré). La conversion, elle, continue
+d'ignorer un original déjà en WebP.
 
 `--webp-manquants` est le **rattrapage** : il ne traite que les pièces jointes dont au moins
 une harmonisée n'a pas de frère `.webp` sur le disque. C'est la commande à passer après une
@@ -248,15 +250,17 @@ wp images-legeres alt missing [--format=<format>]
 wp images-legeres flux check [--format=<format>]
 ```
 
-**Ce qu'est une « image produit »** (définition unique, `ImagesLegeres_Moteur::est_image_produit()`,
-partagée par la qualité d'encodage, le recadrage, les flux, la file des lots et ces
-commandes) : une pièce jointe rattachée à un produit ou à une variation (`post_parent`), **ou**
-affichée par l'un d'eux — image principale (`_thumbnail_id`) ou galerie
-(`_product_image_gallery`). Une image téléversée depuis la médiathèque puis posée sur une
-fiche garde `post_parent = 0` : c'est le cas le plus courant sur un site réel, et elle compte.
-L'inverse — rattachée mais affichée nulle part — compte aussi.
+**Photo produit** (`ImagesLegeres_Moteur::est_photo_produit()` : recadrage, `crop pending`,
+harmonisation) : une image posée en image principale (`_thumbnail_id`) ou en galerie
+(`_product_image_gallery`) d'un produit ou d'une variation. Un fichier seulement rattaché au
+produit (`post_parent`), comme un pictogramme d'ingrédient, n'en est pas une.
 
-`crop pending` liste les images produit hors ratio cible sans rectangle (marque « fond
+**Image produit** (`ImagesLegeres_Moteur::est_image_produit()` : qualité d'encodage, flux,
+file des lots) : définition plus large, les photos produit **et** les fichiers seulement
+rattachés. Une image téléversée depuis la médiathèque puis posée sur une fiche garde
+`post_parent = 0` : elle compte dans les deux.
+
+`crop pending` liste les photos produit hors ratio cible sans rectangle (marque « fond
 assumé » comprise) ; `crop import` pose un lot de rectangles depuis un fichier JSON (une entrée invalide
 est refusée seule, rien n'est écrit pour elle, code de sortie non nul si au moins un échec).
 `alt missing` liste les pièces jointes affichées sans texte alternatif — l'extension ne
