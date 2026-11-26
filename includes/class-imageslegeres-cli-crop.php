@@ -147,8 +147,9 @@ class ImagesLegeres_Cli_Crop {
 	}
 
 	/**
-	 * Importe un lot de rectangles (ou de marques « fond assumé ») depuis un fichier JSON :
-	 * une liste d'objets `{id, x, y, w, h, ref?}` ou `{id, fond_assume: true, motif}`.
+	 * Importe un lot de rectangles depuis un fichier JSON : une liste d'objets
+	 * `{id, x, y, w, h, ref?}`. L'ancienne forme `{id, fond_assume: true, motif}` reste
+	 * acceptée : la photo est alors servie en carré centré et reste à recadrer.
 	 * Chaque entrée est validée et écrite indépendamment des autres ; une entrée invalide
 	 * est refusée seule (rien d'écrit pour elle), le code de sortie est non nul si au moins
 	 * une entrée a échoué.

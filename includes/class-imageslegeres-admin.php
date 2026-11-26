@@ -188,8 +188,8 @@ class ImagesLegeres_Admin {
 		self::ligne_case( 'retaille_originaux_active', __( 'Retaille des originaux existants', 'images-legeres' ), $reglages );
 		self::ligne_case( 'harmonisation_produit_active', __( 'Harmonisation produit', 'images-legeres' ), $reglages );
 		self::ligne_texte( 'ratio_cible', __( 'Ratio cible', 'images-legeres' ), $reglages );
-		self::ligne_case( 'couleur_fond_auto', __( 'Couleur de fond automatique', 'images-legeres' ), $reglages );
-		self::ligne_texte( 'couleur_fond', __( 'Couleur de fond (si non automatique)', 'images-legeres' ), $reglages );
+		self::ligne_case( 'couleur_fond_auto', __( 'Flux Google et Meta : couleur de fond automatique', 'images-legeres' ), $reglages );
+		self::ligne_texte( 'couleur_fond', __( 'Flux Google et Meta : couleur de fond (si non automatique)', 'images-legeres' ), $reglages );
 		self::ligne_case( 'image_flux_active', __( 'Image de flux produits', 'images-legeres' ), $reglages );
 		self::ligne_case( 'flux_google_actif', __( 'Flux Google Listings and Ads', 'images-legeres' ), $reglages );
 		self::ligne_case( 'flux_meta_actif', __( 'Flux Facebook for WooCommerce', 'images-legeres' ), $reglages );

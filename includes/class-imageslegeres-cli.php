@@ -201,7 +201,7 @@ class ImagesLegeres_Cli {
 	 *
 	 * [<ids>...]
 	 * : Identifiants de pièces jointes. Sans argument : toutes les images produit cadrées
-	 * (rectangle posé ou fond assumé).
+	 * (rectangle posé ou marque « fond assumé ») ou déjà harmonisées.
 	 *
 	 * [--webp-manquants]
 	 * : Rattrapage : ne traite que les pièces jointes dont au moins une harmonisée n'a pas
@@ -250,7 +250,7 @@ class ImagesLegeres_Cli {
 		}
 
 		if ( empty( $ids ) ) {
-			WP_CLI::warning( 'aucune image produit cadrée : rien à produire.' );
+			WP_CLI::warning( 'aucune image produit cadrée ou déjà harmonisée : rien à produire.' );
 
 			return;
 		}

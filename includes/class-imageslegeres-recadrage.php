@@ -32,7 +32,8 @@ class ImagesLegeres_Recadrage {
 
 	/**
 	 * Rend true si la pièce jointe porte la marque « fond assumé » (aucun carré ne contient
-	 * le produit entier : décision tracée, pas un échec).
+	 * le produit entier). Marque conservée pour compatibilité : sur la fiche produit elle ne
+	 * change plus rien au rendu.
 	 */
 	public static function fond_assume( $attachment_id ) {
 		$meta = get_post_meta( $attachment_id, self::META, true );
@@ -104,8 +105,8 @@ class ImagesLegeres_Recadrage {
 	}
 
 	/**
-	 * Marque la pièce jointe « fond assumé » : aucun rectangle, le repli fond ajouté
-	 * s'applique, avec un motif tracé (spec § 10, ADR 0005 point 4).
+	 * Marque la pièce jointe « fond assumé » : aucun rectangle, motif tracé. Les carrés
+	 * produit sont alors centrés ; seules les images de flux gardent un fond ajouté.
 	 */
 	public static function marquer_fond_assume( $attachment_id, $motif, $source = 'admin' ) {
 		update_post_meta(
