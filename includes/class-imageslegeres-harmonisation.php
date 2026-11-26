@@ -78,6 +78,24 @@ class ImagesLegeres_Harmonisation {
 		return (bool) preg_match( '#' . preg_quote( self::SUFFIXE, '#' ) . '\d+x\d+\.[a-z]+$#i', (string) $chemin );
 	}
 
+	private static function est_webp( $chemin ) {
+		return 'webp' === strtolower( pathinfo( $chemin, PATHINFO_EXTENSION ) );
+	}
+
+	/**
+	 * Motif d'exclusion propre à l'harmonisation, '' si l'original est éligible. Un original
+	 * déjà en WebP l'est (la conversion, elle, continue de l'ignorer), sauf animé : le carré
+	 * n'en garderait qu'une image.
+	 */
+	private static function motif_exclusion( $original ) {
+		if ( ! self::est_webp( $original ) ) {
+			return ImagesLegeres_Moteur::motif_exclusion( $original );
+		}
+
+		// Compte les images du fichier : vaut pour un WebP comme pour un GIF.
+		return ImagesLegeres_Moteur::est_gif_anime( $original ) ? 'webp animé exclu' : '';
+	}
+
 	/**
 	 * Tailles à harmoniser : toute taille déclarée déjà au ratio cible (son carré remplace
 	 * le recadrage centré de WordPress ou de WooCommerce), plus la taille de la fiche produit,
@@ -274,7 +292,7 @@ class ImagesLegeres_Harmonisation {
 				return false;
 			}
 
-			if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) && ! file_exists( $destination . '.webp' ) ) {
+			if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) && ! self::est_webp( $destination ) && ! file_exists( $destination . '.webp' ) ) {
 				$trace = ImagesLegeres_Table::par_chemin( $relatif );
 
 				if ( ! $trace || 'ignore' !== ( (array) $trace )['etat'] ) {
@@ -340,8 +358,10 @@ class ImagesLegeres_Harmonisation {
 			return array( array( 'taille' => '', 'fichier' => '', 'etat' => 'erreur', 'motif' => 'fichier de la pièce jointe introuvable' ) );
 		}
 
-		if ( ImagesLegeres_Moteur::motif_exclusion( $original ) ) {
-			return array( array( 'taille' => '', 'fichier' => '', 'etat' => 'ignore', 'motif' => ImagesLegeres_Moteur::motif_exclusion( $original ) ) );
+		$exclusion = self::motif_exclusion( $original );
+
+		if ( '' !== $exclusion ) {
+			return array( array( 'taille' => '', 'fichier' => '', 'etat' => 'ignore', 'motif' => $exclusion ) );
 		}
 
 		$metadata  = wp_get_attachment_metadata( $attachment_id );
@@ -389,7 +409,8 @@ class ImagesLegeres_Harmonisation {
 
 			// Le frère .webp de l'harmonisée passe par le moteur : même seuil, même trace
 			// dans ImagesLegeres_Table, donc vu par « Tout rendre » et par `orphelins`.
-			if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) ) {
+			// Un carré déjà en WebP est lui-même le fichier servi : pas de frère.
+			if ( ImagesLegeres_Reglages::valeur( 'conversion_webp_active' ) && ! self::est_webp( $destination ) ) {
 				$webp = ImagesLegeres_Moteur::convertir_vers_webp( $destination, self::qualite() );
 				ImagesLegeres_Table::enregistrer(
 					array(
@@ -483,7 +504,7 @@ class ImagesLegeres_Harmonisation {
 
 			// Une ligne dont le fichier a disparu n'est pas un « webp manquant » : c'est un
 			// trou d'inventaire, que `harmoniser` sans option traite déjà.
-			if ( ! file_exists( $harmonisee ) || file_exists( $harmonisee . '.webp' ) ) {
+			if ( ! file_exists( $harmonisee ) || self::est_webp( $harmonisee ) || file_exists( $harmonisee . '.webp' ) ) {
 				continue;
 			}
 
@@ -529,9 +550,13 @@ class ImagesLegeres_Harmonisation {
 			// repartaient tels quels dans le frère .webp.
 			ImagesLegeres_Compat::retirer_profils( $image );
 
-			$image->setImageFormat( strtolower( pathinfo( $original, PATHINFO_EXTENSION ) ) === 'png' ? 'png' : 'jpeg' );
-
-			if ( 'PNG' !== strtoupper( $image->getImageFormat() ) ) {
+			// Le carré garde le format de l'original.
+			if ( self::est_webp( $original ) ) {
+				ImagesLegeres_Qualite::appliquer_encodage_webp( $image, self::qualite() );
+			} elseif ( 'png' === strtolower( pathinfo( $original, PATHINFO_EXTENSION ) ) ) {
+				$image->setImageFormat( 'png' );
+			} else {
+				$image->setImageFormat( 'jpeg' );
 				$image->setImageCompressionQuality( self::qualite() );
 			}
 

@@ -138,9 +138,12 @@ class ImagesLegeres_Service {
 		return $html_reecrit;
 	}
 
-	/** Motif des adresses d'uploads en JPEG/PNG. */
+	/**
+	 * Motif des adresses d'uploads en JPEG, PNG et WebP (un original WebP a lui aussi ses
+	 * carrés). La plus longue extension l'emporte : « photo.jpg.webp » est lue entière.
+	 */
 	private static function motif_adresses( $baseurl ) {
-		return '#' . preg_quote( $baseurl, '#' ) . '/[^\s"\'\)]+\.(?:jpe?g|png)#i';
+		return '#' . preg_quote( $baseurl, '#' ) . '/[^\s"\'\)]+\.(?:jpe?g|png|webp)#i';
 	}
 
 	/**
@@ -481,6 +484,11 @@ class ImagesLegeres_Service {
 		// ne doit jamais tester l'existence d'un fichier hors de uploads : ce serait un
 		// oracle d'existence sur le reste du disque.
 		if ( false !== strpos( $chemin_relatif, '..' ) ) {
+			return $adresse;
+		}
+
+		// Une adresse déjà en WebP n'a pas de frère à chercher.
+		if ( '.webp' === strtolower( substr( $chemin_relatif, -5 ) ) ) {
 			return $adresse;
 		}
 
